@@ -4,6 +4,7 @@ import os
 import subprocess
 import time
 from pathlib import Path
+from typing import Dict
 
 try:
     from playlist_service import (
@@ -72,6 +73,9 @@ BUG_HEIGHT_FRACTION = get_float_env("HBN_BUG_HEIGHT_FRACTION", 0.12)
 BUG_MARGIN = get_int_env("HBN_BUG_MARGIN", 40)
 BUG_POSITION = os.environ.get("HBN_BUG_POSITION", "top-right").lower()
 
+# Cache for video height probing (expensive operation)
+_video_height_cache: Dict[str, int | None] = {}
+
 
 def load_playlist():
     entries, mtime = load_playlist_entries()
@@ -98,6 +102,13 @@ def overlay_position_expr(position: str, margin: int) -> tuple[str, str]:
 
 
 def probe_video_height(src: str) -> int | None:
+    """Probe video height with caching to avoid repeated ffprobe calls."""
+    global _video_height_cache
+    
+    # Check cache first
+    if src in _video_height_cache:
+        return _video_height_cache[src]
+    
     try:
         result = subprocess.run(
             [
@@ -117,9 +128,13 @@ def probe_video_height(src: str) -> int | None:
             check=True,
         )
         height_str = result.stdout.strip()
-        return int(height_str) if height_str else None
+        height = int(height_str) if height_str else None
     except (subprocess.CalledProcessError, ValueError):
-        return None
+        height = None
+    
+    # Cache the result (even if None to avoid repeated failures)
+    _video_height_cache[src] = height
+    return height
 
 
 def build_overlay_args(video_height: int | None):
@@ -180,6 +195,12 @@ def stream_file(src):
         "3000k",
         "-bufsize",
         "6000k",
+        "-g",
+        "60",
+        "-sc_threshold",
+        "0",
+        "-force_key_frames",
+        "expr:gte(t,n_forced*6)",
         "-c:a",
         "aac",
         "-ac",
@@ -193,9 +214,13 @@ def stream_file(src):
         "-hls_time",
         "6",
         "-hls_list_size",
-        "12",
+        "30",
         "-hls_flags",
         "delete_segments+append_list+omit_endlist+discont_start",
+        "-hls_segment_type",
+        "mpegts",
+        "-hls_segment_filename",
+        "/app/hls/stream%04d.ts",
         OUTPUT,
     ]
     subprocess.run(cmd, check=False)
@@ -258,10 +283,15 @@ def run_stream():
                 time.sleep(10)
                 break
 
-            try:
-                next_index = files.index(last_played) + 1
-            except ValueError:
-                next_index = 0
+            # Optimize: only search if we need to find the next position
+            # If playlist didn't change, just increment
+            if next_index < len(files) and files[next_index] == last_played:
+                next_index += 1
+            else:
+                try:
+                    next_index = files.index(last_played) + 1
+                except ValueError:
+                    next_index = 0
 
 
 if __name__ == "__main__":

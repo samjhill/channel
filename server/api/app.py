@@ -23,12 +23,19 @@ from .settings_service import (
 from ..playlist_service import (
     build_playlist_segments,
     describe_episode,
+    entry_type,
     find_segment_index_for_entry,
     flatten_segments,
     load_playhead_state,
     load_playlist_entries,
+    resolve_playlist_path,
+    save_playhead_state,
     write_playlist_entries,
 )
+
+# Cache for computed segments (invalidated when playlist changes)
+_segments_cache: List[Dict[str, Any]] | None = None
+_segments_playlist_mtime: float = 0.0
 
 app = FastAPI(title="Channel Admin API")
 
@@ -107,9 +114,13 @@ def discover_channel_shows(
 
     shows: List[Dict[str, Any]] = []
     try:
-        for child in sorted(base_path.iterdir()):
-            if not child.is_dir():
-                continue
+        # Collect directories first, then sort once
+        dirs = [child for child in base_path.iterdir() if child.is_dir()]
+        # Sort only if we have directories to process
+        if dirs:
+            dirs.sort(key=lambda p: p.name.lower())
+        
+        for child in dirs:
             rel_path = child.relative_to(base_path)
             shows.append(
                 normalize_show(
@@ -143,7 +154,60 @@ def update_upcoming_playlist(
     return apply_playlist_update(channel_id, payload, limit)
 
 
+@app.post("/api/channels/{channel_id}/playlist/skip-current")
+def skip_current_episode(channel_id: str) -> Dict[str, Any]:
+    """Skip to the end of the currently playing episode by advancing the playhead."""
+    _require_channel(channel_id)
+    
+    try:
+        entries, mtime = load_playlist_entries()
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Playlist not found") from None
+    
+    state = load_playhead_state()
+    if not state or not state.get("current_path"):
+        raise HTTPException(status_code=400, detail="No current episode to skip")
+    
+    current_path = state.get("current_path")
+    current_index = state.get("current_index", -1)
+    
+    # Find the current item in the playlist
+    try:
+        if current_index >= 0 and current_index < len(entries):
+            # Verify the index matches the path
+            if entries[current_index] == current_path:
+                next_index = current_index + 1
+            else:
+                # Index might be stale, search for the path
+                next_index = entries.index(current_path) + 1 if current_path in entries else -1
+        else:
+            # Index is invalid, search for the path
+            next_index = entries.index(current_path) + 1 if current_path in entries else -1
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Current episode not found in playlist") from None
+    
+    # If we're at the end, wrap around
+    if next_index >= len(entries):
+        next_index = 0
+    
+    # Update playhead to point to the next item
+    next_path = entries[next_index]
+    new_state = {
+        "current_path": next_path,
+        "current_index": next_index,
+        "playlist_mtime": mtime,
+        "playlist_path": str(resolve_playlist_path()),
+        "entry_type": entry_type(next_path),
+    }
+    save_playhead_state(new_state)
+    
+    # Return updated snapshot
+    return build_playlist_snapshot(channel_id, 25)
+
+
 def build_playlist_snapshot(channel_id: str, limit: int) -> Dict[str, Any]:
+    global _segments_cache, _segments_playlist_mtime
+    
     channel = _require_channel(channel_id)
 
     try:
@@ -162,7 +226,14 @@ def build_playlist_snapshot(channel_id: str, limit: int) -> Dict[str, Any]:
             "state": None,
         }
 
-    segments = build_playlist_segments(entries)
+    # Use cached segments if playlist hasn't changed
+    if _segments_cache is None or abs(mtime - _segments_playlist_mtime) > 0.001:
+        segments = build_playlist_segments(entries)
+        _segments_cache = segments
+        _segments_playlist_mtime = mtime
+    else:
+        segments = _segments_cache
+    
     state = load_playhead_state()
 
     current_idx = _resolve_current_segment_index(segments, state)
@@ -198,6 +269,8 @@ def build_playlist_snapshot(channel_id: str, limit: int) -> Dict[str, Any]:
 def apply_playlist_update(
     channel_id: str, payload: PlaylistUpdateRequest, limit: int
 ) -> Dict[str, Any]:
+    global _segments_cache, _segments_playlist_mtime
+    
     _require_channel(channel_id)
 
     try:
@@ -213,7 +286,13 @@ def apply_playlist_update(
             status_code=409, detail="Playlist changed; refresh and try again."
         )
 
-    segments = build_playlist_segments(entries)
+    # Use cached segments if available and valid
+    if _segments_cache is not None and abs(mtime - _segments_playlist_mtime) < 0.001:
+        segments = _segments_cache
+    else:
+        segments = build_playlist_segments(entries)
+        _segments_cache = segments
+        _segments_playlist_mtime = mtime
     if not segments:
         return build_playlist_snapshot(channel_id, limit)
 
@@ -262,6 +341,10 @@ def apply_playlist_update(
 
     flattened = flatten_segments(new_segments)
     new_mtime = write_playlist_entries(flattened)
+    
+    # Invalidate segments cache after write
+    _segments_cache = None
+    _segments_playlist_mtime = 0.0
 
     # Ensure callers receive fresh data
     snapshot = build_playlist_snapshot(channel_id, limit)

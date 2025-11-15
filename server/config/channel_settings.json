@@ -164,7 +164,7 @@
           "id": "gargoyles",
           "label": "Gargoyles",
           "path": "Gargoyles",
-          "include": true,
+          "include": false,
           "playback_mode": "inherit",
           "weight": 1.0
         },
@@ -180,7 +180,7 @@
           "id": "invader-zim",
           "label": "Invader ZIM",
           "path": "Invader ZIM",
-          "include": true,
+          "include": false,
           "playback_mode": "inherit",
           "weight": 1.0
         },
@@ -260,7 +260,7 @@
           "id": "reno-911",
           "label": "Reno 911!",
           "path": "Reno 911!",
-          "include": true,
+          "include": false,
           "playback_mode": "inherit",
           "weight": 1.0
         },
@@ -300,7 +300,7 @@
           "id": "south-park",
           "label": "South Park",
           "path": "South Park",
-          "include": true,
+          "include": false,
           "playback_mode": "inherit",
           "weight": 1.0
         },

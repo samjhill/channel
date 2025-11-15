@@ -375,6 +375,18 @@ body {
   border-color: var(--color-primary);
 }
 
+.playlist-now-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.playlist-now-header h3 {
+  margin: 0;
+}
+
 .playlist-upcoming-header {
   display: flex;
   align-items: baseline;

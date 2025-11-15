@@ -20,6 +20,14 @@ FALLBACK_PLAYLIST_PATH = REPO_ROOT / "hls" / "playlist.txt"
 DEFAULT_PLAYHEAD_PATH = Path("/app/hls/playhead.json")
 FALLBACK_PLAYHEAD_PATH = REPO_ROOT / "hls" / "playhead.json"
 
+# Cache for paths, playlist entries, and playhead state
+_playlist_path_cache: Optional[Path] = None
+_playhead_path_cache: Optional[Path] = None
+_playlist_cache: Optional[Tuple[List[str], float]] = None
+_playlist_mtime: float = 0.0
+_playhead_cache: Optional[Dict[str, Any]] = None
+_playhead_mtime: float = 0.0
+
 
 def _resolve_path(env_var: str, default_path: Path, fallback_path: Path) -> Path:
     override = os.environ.get(env_var)
@@ -34,30 +42,60 @@ def _resolve_path(env_var: str, default_path: Path, fallback_path: Path) -> Path
 
 
 def resolve_playlist_path() -> Path:
-    return _resolve_path("CHANNEL_PLAYLIST_PATH", DEFAULT_PLAYLIST_PATH, FALLBACK_PLAYLIST_PATH)
+    """Resolve playlist path with caching."""
+    global _playlist_path_cache
+    
+    if _playlist_path_cache is not None:
+        return _playlist_path_cache
+    
+    _playlist_path_cache = _resolve_path("CHANNEL_PLAYLIST_PATH", DEFAULT_PLAYLIST_PATH, FALLBACK_PLAYLIST_PATH)
+    return _playlist_path_cache
 
 
 def resolve_playhead_path() -> Path:
-    return _resolve_path("CHANNEL_PLAYHEAD_PATH", DEFAULT_PLAYHEAD_PATH, FALLBACK_PLAYHEAD_PATH)
+    """Resolve playhead path with caching."""
+    global _playhead_path_cache
+    
+    if _playhead_path_cache is not None:
+        return _playhead_path_cache
+    
+    _playhead_path_cache = _resolve_path("CHANNEL_PLAYHEAD_PATH", DEFAULT_PLAYHEAD_PATH, FALLBACK_PLAYHEAD_PATH)
+    return _playhead_path_cache
 
 
 def load_playlist_entries() -> Tuple[List[str], float]:
+    """Load playlist entries with mtime-based caching."""
+    global _playlist_cache, _playlist_mtime
+    
     playlist_path = resolve_playlist_path()
     if not playlist_path.exists():
         raise FileNotFoundError(f"Playlist not found at {playlist_path}")
 
+    # Check mtime to see if cache is still valid
+    try:
+        current_mtime = playlist_path.stat().st_mtime
+    except (FileNotFoundError, OSError):
+        current_mtime = time.time()
+    
+    # Return cached version if file hasn't changed
+    if _playlist_cache is not None and abs(current_mtime - _playlist_mtime) < 0.001:
+        return _playlist_cache
+    
+    # Load from file
     with playlist_path.open("r", encoding="utf-8") as fh:
         entries = [line.strip() for line in fh if line.strip()]
 
-    try:
-        mtime = playlist_path.stat().st_mtime
-    except FileNotFoundError:
-        mtime = time.time()
-
-    return entries, mtime
+    # Update cache
+    _playlist_cache = (entries, current_mtime)
+    _playlist_mtime = current_mtime
+    
+    return _playlist_cache
 
 
 def write_playlist_entries(entries: Sequence[str]) -> float:
+    """Write playlist entries and invalidate cache."""
+    global _playlist_cache, _playlist_mtime
+    
     playlist_path = resolve_playlist_path()
     playlist_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -70,23 +108,55 @@ def write_playlist_entries(entries: Sequence[str]) -> float:
 
     tmp_path.replace(playlist_path)
     try:
-        return playlist_path.stat().st_mtime
+        mtime = playlist_path.stat().st_mtime
     except FileNotFoundError:
-        return time.time()
+        mtime = time.time()
+    
+    # Invalidate cache after write
+    _playlist_cache = None
+    _playlist_mtime = 0.0
+    
+    return mtime
 
 
 def load_playhead_state() -> Dict[str, Any]:
+    """Load playhead state with mtime-based caching."""
+    global _playhead_cache, _playhead_mtime
+    
     playhead_path = resolve_playhead_path()
     if not playhead_path.exists():
+        _playhead_cache = {}
+        _playhead_mtime = 0.0
         return {}
+    
+    # Check mtime to see if cache is still valid
+    try:
+        current_mtime = playhead_path.stat().st_mtime
+    except (FileNotFoundError, OSError):
+        current_mtime = 0.0
+    
+    # Return cached version if file hasn't changed
+    if _playhead_cache is not None and abs(current_mtime - _playhead_mtime) < 0.001:
+        return _playhead_cache
+    
+    # Load from file
     with playhead_path.open("r", encoding="utf-8") as fh:
         try:
-            return json.load(fh)
+            state = json.load(fh)
         except json.JSONDecodeError:
-            return {}
+            state = {}
+    
+    # Update cache
+    _playhead_cache = state
+    _playhead_mtime = current_mtime
+    
+    return _playhead_cache
 
 
 def save_playhead_state(state: Dict[str, Any]) -> None:
+    """Save playhead state and update cache."""
+    global _playhead_cache, _playhead_mtime
+    
     playhead_path = resolve_playhead_path()
     playhead_path.parent.mkdir(parents=True, exist_ok=True)
     state["updated_at"] = time.time()
@@ -96,6 +166,13 @@ def save_playhead_state(state: Dict[str, Any]) -> None:
         json.dump(state, tmp, indent=2)
         tmp_path = Path(tmp.name)
     tmp_path.replace(playhead_path)
+    
+    # Update cache after write
+    try:
+        _playhead_mtime = playhead_path.stat().st_mtime
+    except (FileNotFoundError, OSError):
+        _playhead_mtime = time.time()
+    _playhead_cache = state
 
 
 def _normalize_token(value: str) -> str:
@@ -175,8 +252,15 @@ def build_playlist_segments(entries: Sequence[str]) -> List[Dict[str, Any]]:
 
 
 def find_segment_index_for_entry(segments: Sequence[Dict[str, Any]], entry_path: str) -> int:
+    """Find segment index for an entry path, optimized with early exit."""
+    # Use a set for O(1) lookup within entries
     for idx, segment in enumerate(segments):
-        if entry_path in segment.get("entries", []):
+        entries = segment.get("entries", [])
+        # Check episode_path first (most common case)
+        if segment.get("episode_path") == entry_path:
+            return idx
+        # Then check entries list
+        if entry_path in entries:
             return idx
     return -1
 

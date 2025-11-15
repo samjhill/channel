@@ -21,16 +21,39 @@ DEFAULT_MEDIA_ROOT = "/media/tvchannel"
 CHANNEL_PLAYBACK_MODES = {"sequential", "random"}
 SHOW_PLAYBACK_MODES = {"inherit", "sequential", "random"}
 
+# Cache for settings and path resolution
+_settings_cache: Optional[Dict[str, Any]] = None
+_settings_mtime: float = 0.0
+_config_path_cache: Optional[Path] = None
+_channels_index: Dict[str, Dict[str, Any]] = {}
+
 
 def _resolve_config_path() -> Path:
+    """Resolve config path with caching."""
+    global _config_path_cache
+    
+    if _config_path_cache is not None:
+        return _config_path_cache
+    
     override = os.environ.get("CHANNEL_CONFIG")
     if override:
-        return Path(override).expanduser()
+        _config_path_cache = Path(override).expanduser()
+        return _config_path_cache
 
     if CONTAINER_CONFIG_PATH.exists() or CONTAINER_CONFIG_PATH.parent.exists():
-        return CONTAINER_CONFIG_PATH
+        _config_path_cache = CONTAINER_CONFIG_PATH
+        return _config_path_cache
 
-    return CONFIG_PATH
+    _config_path_cache = CONFIG_PATH
+    return _config_path_cache
+
+
+def _invalidate_settings_cache() -> None:
+    """Invalidate the settings cache."""
+    global _settings_cache, _settings_mtime, _channels_index
+    _settings_cache = None
+    _settings_mtime = 0.0
+    _channels_index = {}
 
 
 def slugify(text: str, fallback: str = "channel") -> str:
@@ -186,7 +209,25 @@ def validate_settings(data: Dict[str, Any]) -> None:
 
 
 def load_settings() -> Dict[str, Any]:
+    """Load settings with mtime-based caching."""
+    global _settings_cache, _settings_mtime, _channels_index
+    
     config_path = _resolve_config_path()
+    
+    # Check if file exists and get mtime
+    if config_path.exists():
+        try:
+            current_mtime = config_path.stat().st_mtime
+        except OSError:
+            current_mtime = 0.0
+    else:
+        current_mtime = 0.0
+    
+    # Return cached version if file hasn't changed
+    if _settings_cache is not None and abs(current_mtime - _settings_mtime) < 0.001:
+        return _settings_cache
+    
+    # Load and normalize settings
     if config_path.exists():
         with config_path.open("r", encoding="utf-8") as fh:
             raw = json.load(fh)
@@ -196,6 +237,20 @@ def load_settings() -> Dict[str, Any]:
     normalized = normalize_settings(raw)
     if normalized != raw:
         save_settings(normalized)
+        # Re-read mtime after save
+        if config_path.exists():
+            try:
+                current_mtime = config_path.stat().st_mtime
+            except OSError:
+                current_mtime = 0.0
+    
+    # Update cache
+    _settings_cache = normalized
+    _settings_mtime = current_mtime
+    
+    # Build channel index for O(1) lookups
+    _channels_index = {ch.get("id"): ch for ch in normalized.get("channels", [])}
+    
     return normalized
 
 
@@ -206,17 +261,21 @@ def save_settings(data: Dict[str, Any]) -> None:
     config_path.parent.mkdir(parents=True, exist_ok=True)
     with config_path.open("w", encoding="utf-8") as fh:
         json.dump(normalized, fh, indent=2)
+    # Invalidate cache after save
+    _invalidate_settings_cache()
 
 
 def list_channels() -> List[Dict[str, Any]]:
+    """List all channels, using cached settings."""
     return load_settings().get("channels", [])
 
 
 def get_channel(channel_id: str) -> Optional[Dict[str, Any]]:
-    for channel in list_channels():
-        if channel.get("id") == channel_id:
-            return channel
-    return None
+    """Get channel by ID with O(1) lookup using cached index."""
+    # Ensure cache is loaded
+    load_settings()
+    # Use index for O(1) lookup instead of linear search
+    return _channels_index.get(channel_id)
 
 
 def replace_channel(channel_id: str, new_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -225,10 +284,12 @@ def replace_channel(channel_id: str, new_data: Dict[str, Any]) -> Dict[str, Any]
     updated_channel["id"] = channel_id
 
     channels = settings.get("channels", [])
-    for idx, channel in enumerate(channels):
-        if channel.get("id") == channel_id:
-            channels[idx] = updated_channel
-            break
+    # Use index to find channel faster
+    if channel_id in _channels_index:
+        for idx, channel in enumerate(channels):
+            if channel.get("id") == channel_id:
+                channels[idx] = updated_channel
+                break
     else:
         raise KeyError(f"Channel '{channel_id}' not found.")
 

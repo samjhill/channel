@@ -121,3 +121,13 @@ export async function updateUpcomingPlaylist(
   return handleResponse<PlaylistSnapshot>(res);
 }
 
+export async function skipCurrentEpisode(channelId: string): Promise<PlaylistSnapshot> {
+  const res = await fetch(
+    `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/playlist/skip-current`,
+    {
+      method: "POST"
+    }
+  );
+  return handleResponse<PlaylistSnapshot>(res);
+}
+

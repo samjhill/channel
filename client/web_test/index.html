@@ -38,11 +38,13 @@
 
       if (window.Hls && Hls.isSupported()) {
         const hlsConfig = {
-          maxBufferLength: 60,
-          maxMaxBufferLength: 240,
+          maxBufferLength: 90,
+          maxMaxBufferLength: 300,
           backBufferLength: 120,
           liveSyncDuration: 12,
-          liveMaxLatencyDuration: 60
+          liveMaxLatencyDuration: 90,
+          maxBufferSize: 60 * 1000 * 1000,
+          maxBufferHole: 0.5
         };
         const hls = new Hls(hlsConfig);
         hls.loadSource(streamUrl);
@@ -52,6 +54,40 @@
         });
         hls.on(Hls.Events.ERROR, function (event, data) {
           console.error('HLS error', event, data);
+          if (data.fatal) {
+            switch(data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.log('Fatal network error encountered, try to recover');
+                hls.startLoad();
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.log('Fatal media error encountered, try to recover');
+                hls.recoverMediaError();
+                break;
+              default:
+                console.log('Fatal error, destroying');
+                hls.destroy();
+                break;
+            }
+          } else if (data.type === 'mediaError' && data.details === 'bufferStalledError') {
+            // Non-fatal buffer stall - try to recover
+            console.log('Buffer stall detected, attempting recovery');
+            
+            // If buffer is critically low (< 2 seconds), pause briefly to let it rebuild
+            const bufferInfo = data.bufferInfo;
+            if (bufferInfo && bufferInfo.len < 2 && !video.paused) {
+              console.log('Buffer critically low, pausing briefly to rebuild');
+              const wasPlaying = !video.paused;
+              video.pause();
+              
+              // Resume after a short delay to let buffer catch up
+              setTimeout(() => {
+                if (wasPlaying && video.readyState >= video.HAVE_CURRENT_DATA) {
+                  video.play().catch(() => {});
+                }
+              }, 1000);
+            }
+          }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = streamUrl;

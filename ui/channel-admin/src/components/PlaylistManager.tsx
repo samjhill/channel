@@ -3,6 +3,7 @@ import {
   PlaylistItem,
   PlaylistSnapshot,
   fetchPlaylistSnapshot,
+  skipCurrentEpisode,
   updateUpcomingPlaylist
 } from "../api";
 
@@ -19,6 +20,7 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
   const [skipped, setSkipped] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
@@ -130,6 +132,30 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
     }
   };
 
+  const handleSkipCurrent = async () => {
+    if (!channelId) {
+      return;
+    }
+    setSkipping(true);
+    setStatus(null);
+    setError(null);
+    try {
+      const nextSnapshot = await skipCurrentEpisode(channelId);
+      setSnapshot(nextSnapshot);
+      setDraft(nextSnapshot.upcoming);
+      setSkipped(new Set());
+      setDirty(false);
+      setStatus("Skipped to next episode");
+      setTimeout(() => setStatus(null), 3000);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to skip episode";
+      setError(message);
+    } finally {
+      setSkipping(false);
+    }
+  };
+
   const hasDraft = draft.length > 0;
 
   const summary = useMemo(() => {
@@ -179,7 +205,16 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
       {channelId && (
         <>
           <div className="playlist-now card">
-            <h3>Now Playing</h3>
+            <div className="playlist-now-header">
+              <h3>Now Playing</h3>
+              <button
+                className="btn btn-secondary"
+                onClick={handleSkipCurrent}
+                disabled={skipping || loading || saving || !snapshot || !snapshot.current}
+              >
+                {skipping ? "Skipping…" : "Skip to End"}
+              </button>
+            </div>
             {!snapshot && loading && <p>Loading current item…</p>}
             {snapshot && snapshot.current ? (
               <div>

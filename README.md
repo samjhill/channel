@@ -1,6 +1,6 @@
-# Always-On TV Channel
+# Your Own TV Channel
 
-Self-hosted TV channel stack that streams a folder of videos through FFmpeg → HLS and plays it on a Raspberry Pi running Kodi.
+Create your own always-on TV channel from a folder of videos. Stream your favorite shows, movies, or home videos 24/7—just like a real TV network, but completely yours. Perfect for running on a Raspberry Pi with Kodi, or watch it in any web browser.
 
 ## Structure
 

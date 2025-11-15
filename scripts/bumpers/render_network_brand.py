@@ -30,8 +30,8 @@ PAPER_WHITE = "#F8F5E9"
 PEACH = "#FFB267"
 NIGHT_INDIGO = "#090712"
 
-LOGO_SVG_PATH = "branding/hbn_logo_bug.svg"
-LOGO_PNG_PATH = "branding/hbn_logo_bug.png"
+LOGO_SVG_PATH = "branding/hbn_logo_full.svg"
+LOGO_PNG_PATH = "branding/hbn_logo_full.png"
 
 
 def resolve_assets_root() -> Path:
@@ -212,10 +212,10 @@ def render_network_brand_bumper(
         seed = secrets.randbits(32)
     rng = np.random.default_rng(seed)
 
-    # Prepare logo
+    # Prepare full logo
     with tempfile.TemporaryDirectory() as tmpdir:
-        logo_png_tmp = Path(tmpdir) / "logo.png"
-        logo_png = ensure_logo_png(logo_svg_path, logo_png_tmp, size=600)
+        logo_png_tmp = Path(tmpdir) / "logo_full.png"
+        logo_png = ensure_logo_png(logo_svg_path, logo_png_tmp, size=max(width, height))
         if not logo_png or not logo_png.exists():
             raise RuntimeError(f"Could not convert or find logo at {logo_svg_path}")
 
@@ -227,78 +227,41 @@ def render_network_brand_bumper(
         logo_start = 0.2
         logo_fade_duration = 1.0
         logo_scale_anim_duration = 1.5
-        text_start = 1.5
-        text_fade_duration = 1.0
         fade_out_start = duration_sec - 1.5
         fade_out_duration = 1.5
-
-        # Text to display
-        network_name = "HILLSIDE BROADCASTING NETWORK"
-        station_info = "W-HBN NEWARK · EST. 2025"
-
-        # Load fonts
-        title_font = load_font(FONT_CANDIDATES_BOLD, 72)
-        subtitle_font = load_font(FONT_CANDIDATES_REGULAR, 32)
 
         # Generate frames
         for idx in range(num_frames):
             t = idx / fps
 
-            # Background with subtle gradient
-            frame = create_vertical_gradient(width, height, NIGHT_INDIGO, "#1a1520")
+            # Start with the logo image as base (it already has the background and all text)
+            frame = base_logo.copy().convert("RGBA")
+
+            # Add subtle grain for texture
             frame = add_grain(frame, opacity=0.12, rng=rng)
-
-            draw = ImageDraw.Draw(frame)
-
-            center_x = width // 2
 
             # Logo animation - fade in and scale
             logo_progress = clamp((t - logo_start) / logo_fade_duration)
             logo_alpha = ease_out_cubic(logo_progress)
             logo_scale_progress = clamp((t - logo_start) / logo_scale_anim_duration)
-            logo_scale = lerp(0.85, 1.0, ease_out_cubic(logo_scale_progress))
+            logo_scale = lerp(0.92, 1.0, ease_out_cubic(logo_scale_progress))
 
-            if logo_alpha > 0:
-                logo_size = (int(base_logo.width * logo_scale), int(base_logo.height * logo_scale))
-                scaled_logo = base_logo.resize(logo_size, Image.LANCZOS)
-                
-                logo_layer = Image.new("RGBA", frame.size, (0, 0, 0, 0))
-                logo_alpha_mask = scaled_logo.getchannel("A").point(lambda a: int(a * logo_alpha))
-                logo_with_alpha = scaled_logo.copy()
-                logo_with_alpha.putalpha(logo_alpha_mask)
-                
-                logo_x = center_x - scaled_logo.width // 2
-                logo_y = int(height * 0.35) - scaled_logo.height // 2
-                logo_layer.paste(logo_with_alpha, (logo_x, logo_y), logo_with_alpha)
-                frame = Image.alpha_composite(frame, logo_layer)
-                draw = ImageDraw.Draw(frame)
-
-            # Text animation - fade in below logo
-            text_progress = clamp((t - text_start) / text_fade_duration)
-            text_alpha = ease_out_cubic(text_progress)
-
-            if text_alpha > 0:
-                # Network name
-                name_y = int(height * 0.6)
-                name_fill = (*ImageColor.getrgb(PAPER_WHITE), int(255 * text_alpha))
-                draw.text(
-                    (center_x, name_y),
-                    network_name,
-                    font=title_font,
-                    fill=name_fill,
-                    anchor="mm",
-                )
-
-                # Station info
-                info_y = name_y + 80
-                info_fill = (*ImageColor.getrgb(PEACH), int(255 * text_alpha))
-                draw.text(
-                    (center_x, info_y),
-                    station_info,
-                    font=subtitle_font,
-                    fill=info_fill,
-                    anchor="mm",
-                )
+            # Always create a canvas of the target dimensions and center the logo
+            # Scale and apply alpha
+            new_size = (int(frame.width * logo_scale), int(frame.height * logo_scale))
+            scaled_frame = frame.resize(new_size, Image.LANCZOS)
+            
+            # Create centered canvas
+            logo_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+            logo_x = (width - scaled_frame.width) // 2
+            logo_y = (height - scaled_frame.height) // 2
+            
+            # Apply alpha
+            alpha_mask = scaled_frame.getchannel("A").point(lambda a: int(a * logo_alpha))
+            scaled_frame.putalpha(alpha_mask)
+            
+            logo_layer.paste(scaled_frame, (logo_x, logo_y), scaled_frame)
+            frame = logo_layer
 
             # Fade out
             fade_progress = clamp((t - fade_out_start) / fade_out_duration) if t >= fade_out_start else 0.0

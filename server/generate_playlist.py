@@ -283,21 +283,27 @@ class SassyCardManager:
         self._cards = cards
         return cards
 
+    def reset_deck(self) -> None:
+        """Reset the deck to start fresh for a new playlist generation."""
+        self._deck = []
+
     def draw_card(self) -> Optional[str]:
         if not self.enabled():
-            return None
-
-        probability = self.probability()
-        if probability <= 0 or random.random() > probability:
             return None
 
         cards = self._ensure_cards()
         if not cards:
             return None
 
+        # Reshuffle deck if empty
         if not self._deck:
             self._deck = cards[:]
             random.shuffle(self._deck)
+
+        # Check probability after ensuring we have cards available
+        probability = self.probability()
+        if probability <= 0 or random.random() > probability:
+            return None
 
         return self._deck.pop()
 
@@ -319,8 +325,8 @@ class NetworkBumperManager:
 
     def _resolve_logo_path(self) -> Optional[str]:
         if self._logo_path is None:
-            svg_candidate = os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.svg")
-            png_candidate = os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png")
+            svg_candidate = os.path.join(ASSETS_ROOT, "branding", "hbn_logo_full.svg")
+            png_candidate = os.path.join(ASSETS_ROOT, "branding", "hbn_logo_full.png")
             if os.path.isfile(svg_candidate):
                 self._logo_path = svg_candidate
             elif os.path.isfile(png_candidate):
@@ -417,11 +423,14 @@ def collect_show_episodes(media_root: str, show: Dict[str, Any]) -> List[str]:
         return []
 
     episodes: List[str] = []
+    # Use pathlib for better performance
+    video_exts_lower = tuple(ext.lower() for ext in VIDEO_EXTENSIONS)
     for root, _, files in os.walk(base_path):
-        for fn in files:
-            if not fn.lower().endswith(VIDEO_EXTENSIONS):
-                continue
+        # Filter files first before path operations
+        video_files = [fn for fn in files if fn.lower().endswith(video_exts_lower)]
+        for fn in video_files:
             episodes.append(os.path.join(root, fn))
+    # Sort once at the end
     episodes.sort()
     return episodes
 
@@ -501,6 +510,7 @@ def schedule_weighted_random(
         if episode_limit is not None and processed >= episode_limit:
             break
 
+        # Pre-compute weights only when needed (list might change)
         weights = [entry["weight"] for entry in active]
         chosen = random.choices(active, weights=weights, k=1)[0]
         if not chosen["episodes"]:
@@ -579,6 +589,9 @@ def main():
     settings = load_settings()
     channel = resolve_channel(settings)
     media_root = channel.get("media_root") or "/media/tvchannel"
+
+    # Reset sassy card deck for fresh shuffle
+    SASSY_CARDS.reset_deck()
 
     shows = filter_shows(channel)
     if not shows:

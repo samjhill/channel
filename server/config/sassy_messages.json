@@ -2,7 +2,7 @@
   "enabled": true,
   "duration_seconds": 5,
   "music_volume": 0.5,
-  "probability_between_episodes": 0.75,
+  "probability_between_episodes": 1.0,
   "style": "hbn-cozy",
   "messages": [
     "You could be doing something productive right now.",
