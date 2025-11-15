@@ -1,0 +1,54 @@
+<svg width="1600" height="900" viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="hbnGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F28B50"></stop>
+      <stop offset="50%" stop-color="#DA5C86"></stop>
+      <stop offset="100%" stop-color="#475D92"></stop>
+    </linearGradient>
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"></feGaussianBlur>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 0.4 0" result="glow"></feColorMatrix>
+      <feMerge>
+        <feMergeNode in="glow"></feMergeNode>
+        <feMergeNode in="SourceGraphic"></feMergeNode>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="900" fill="#111017"></rect>
+  
+  <!-- Soft vignette -->
+  <radialGradient id="vignetteGrad" cx="50%" cy="40%" r="70%">
+    <stop offset="0%" stop-color="#222033" stop-opacity="1"></stop>
+    <stop offset="100%" stop-color="#05040A" stop-opacity="1"></stop>
+  </radialGradient>
+  <rect width="1600" height="900" fill="url(#vignetteGrad)" opacity="0.95"></rect>
+
+  <!-- Large faded background HBN -->
+  <text x="50%" y="48%" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="320" fill="#201A2F" opacity="0.35">
+    HBN
+  </text>
+
+  <!-- Main HBN logo -->
+  <g filter="url(#softGlow)">
+    <text x="50%" y="46%" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-weight="800" font-size="260" fill="url(#hbnGradient)" letter-spacing="12">
+      HBN
+    </text>
+  </g>
+
+  <!-- Subheading -->
+  <text x="50%" y="60%" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-weight="400" font-size="44" fill="#F8F5E9" letter-spacing="8">
+    HILLSIDE BROADCASTING NETWORK
+  </text>
+
+  <!-- Call sign -->
+  <text x="50%" y="67%" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-weight="300" font-size="26" fill="#C7C3B8" letter-spacing="6">
+    W-HBN NEWARK · EST. 2025
+  </text>
+
+  <!-- Bottom line accent -->
+  <line x1="480" y1="695" x2="1120" y2="695" stroke="#FFB267" stroke-width="3" stroke-linecap="round" stroke-opacity="0.85"></line>
+</svg>

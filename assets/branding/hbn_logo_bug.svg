@@ -1,0 +1,38 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="hbnBugGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#F28B50"></stop>
+      <stop offset="50%" stop-color="#DA5C86"></stop>
+      <stop offset="100%" stop-color="#475D92"></stop>
+    </linearGradient>
+    <filter id="bugGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"></feGaussianBlur>
+      <feColorMatrix in="blur" type="matrix" values="1 0 0 0 0
+                0 1 0 0 0
+                0 0 1 0 0
+                0 0 0 0.4 0" result="glow"></feColorMatrix>
+      <feMerge>
+        <feMergeNode in="glow"></feMergeNode>
+        <feMergeNode in="SourceGraphic"></feMergeNode>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="64" ry="64" fill="#090712"></rect>
+  <rect x="12" y="12" width="488" height="488" rx="60" ry="60" fill="none" stroke="#2B2640" stroke-width="4"></rect>
+
+  <!-- Background subtle HBN -->
+  <text x="50%" y="56%" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="260" fill="#1C1626" opacity="0.45">
+    HBN
+  </text>
+
+  <!-- Foreground HBN -->
+  <g filter="url(#bugGlow)">
+    <text x="50%" y="54%" text-anchor="middle" font-family="system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-weight="800" font-size="220" fill="url(#hbnBugGradient)" letter-spacing="10">
+      HBN
+    </text>
+  </g>
+
+  <!-- Small underline accent -->
+  <line x1="156" y1="380" x2="356" y2="380" stroke="#FFB267" stroke-width="4" stroke-linecap="round" stroke-opacity="0.9"></line>
+</svg>

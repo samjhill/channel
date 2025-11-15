@@ -1,0 +1,47 @@
+{
+  "channels": [
+    {
+      "id": "hbn-main",
+      "name": "Hillside Broadcasting Network",
+      "enabled": true,
+      "media_root": "/media/tvchannel",
+      "playback_mode": "sequential",
+      "loop_entire_library": true,
+      "shows": [
+        {
+          "id": "office",
+          "label": "The Office",
+          "path": "The Office",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "steven-universe",
+          "label": "Steven Universe",
+          "path": "Steven Universe",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "seinfeld",
+          "label": "Seinfeld",
+          "path": "Seinfeld",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        }
+      ],
+      "bumpers": {
+        "enable_up_next": true,
+        "enable_intermission": true
+      },
+      "branding": {
+        "show_bug_overlay": true
+      }
+    }
+  ]
+}
+
+
