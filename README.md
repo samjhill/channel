@@ -70,7 +70,9 @@ VITE_API_BASE=http://localhost:8000 npm run dev
 
 For production builds, run `npm run build` and serve the output from `ui/channel-admin/dist/`.
 
-The admin UI lets you update the channel media root (TV folder), adjust playback options, and run **Discover shows** to scan the folder for new series that can be toggled into the playlist.
+The admin UI lets you update the channel media root (TV folder), adjust playback options, and run **Discover shows** to scan the folder for new series that can be toggled into the playlist. Saving settings triggers a media-server restart so the stream picks up new changes.
+
+> **Auto restart:** Set `CHANNEL_RESTART_COMMAND` before launching the API (e.g. `export CHANNEL_RESTART_COMMAND="docker restart tvchannel"`). When unset, the API falls back to regenerating the playlist so changes apply on the next loop.
 
 ### HBN “Up Next” Dynamic Bumpers
 

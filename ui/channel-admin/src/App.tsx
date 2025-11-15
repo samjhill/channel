@@ -133,6 +133,12 @@ function App() {
     if (!currentChannel) {
       return;
     }
+    const confirmRestart = window.confirm(
+      "Saving will restart the media server so changes take effect. Continue?"
+    );
+    if (!confirmRestart) {
+      return;
+    }
     setSaving(true);
     setStatus(null);
     try {

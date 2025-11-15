@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from .media_control import restart_media_server
 from .settings_service import (
     get_channel,
     list_channels,
@@ -62,6 +63,7 @@ def update_channel(channel_id: str, updated: Dict[str, Any]) -> Dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    restart_media_server()
     return saved
 
 

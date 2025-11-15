@@ -10,9 +10,9 @@ interface Props {
 function SaveBar({ dirty, saving, disabled, status, onSave, onDiscard }: Props) {
   return (
     <div className="save-bar">
-      <div className="status-message">
-        {saving && "Saving…"}
-        {!saving && dirty && "You have unsaved changes"}
+      <div className="status-message" aria-live="polite">
+        {saving && "Restarting media server…"}
+        {!saving && dirty && "Saving will restart the media server."}
         {!saving && !dirty && (status || "No changes")}
       </div>
       <div style={{ display: "flex", gap: "0.5rem" }}>
@@ -24,7 +24,7 @@ function SaveBar({ dirty, saving, disabled, status, onSave, onDiscard }: Props) 
           onClick={onSave}
           disabled={disabled || saving}
         >
-          {saving ? "Saving…" : "Save"}
+          {saving ? "Restarting…" : "Save"}
         </button>
       </div>
     </div>
