@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChannelConfig,
   PlaybackMode,
@@ -26,6 +26,7 @@ function App() {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     fetchChannels()
@@ -47,6 +48,7 @@ function App() {
       .then((channel) => {
         setCurrentChannel(channel);
         setInitialChannel(cloneChannel(channel));
+        setDirty(false);
         setError(null);
       })
       .catch((err) => {
@@ -57,18 +59,13 @@ function App() {
       .finally(() => setLoading(false));
   }, [selectedId]);
 
-  const isDirty = useMemo(() => {
-    if (!currentChannel || !initialChannel) {
-      return false;
-    }
-    return JSON.stringify(currentChannel) !== JSON.stringify(initialChannel);
-  }, [currentChannel, initialChannel]);
-
   const handleChannelChange = (field: keyof ChannelConfig, value: unknown) => {
     if (!currentChannel) {
       return;
     }
-    setCurrentChannel({ ...currentChannel, [field]: value });
+    const next = { ...currentChannel, [field]: value };
+    setCurrentChannel(next);
+    setDirty(true);
   };
 
   const handleShowChange = (index: number, updated: Partial<ShowConfig>) => {
@@ -79,6 +76,7 @@ function App() {
       idx === index ? { ...show, ...updated } : show
     );
     setCurrentChannel({ ...currentChannel, shows });
+    setDirty(true);
   };
 
   const handleBulkAction = (action: "selectAll" | "deselectAll" | "normalizeWeights") => {
@@ -94,6 +92,7 @@ function App() {
       shows = shows.map((show) => ({ ...show, weight: 1 }));
     }
     setCurrentChannel({ ...currentChannel, shows });
+    setDirty(true);
   };
 
   const handleDiscoveredShows = (discovered: ShowConfig[]) => {
@@ -103,6 +102,7 @@ function App() {
     const existingIndex = new Map(currentChannel.shows.map((show, idx) => [show.id, idx]));
     const merged = [...currentChannel.shows];
     let added = 0;
+    let changed = false;
 
     discovered.forEach((show) => {
       const idx = existingIndex.get(show.id);
@@ -110,12 +110,22 @@ function App() {
         merged.push(show);
         existingIndex.set(show.id, merged.length - 1);
         added += 1;
+        changed = true;
       } else {
-        merged[idx] = { ...merged[idx], ...show };
+        const prev = merged[idx];
+        const next = { ...prev, ...show };
+        if (JSON.stringify(prev) !== JSON.stringify(next)) {
+          merged[idx] = next;
+          changed = true;
+        }
       }
     });
 
-    setCurrentChannel({ ...currentChannel, shows: merged });
+    if (changed) {
+      setCurrentChannel({ ...currentChannel, shows: merged });
+      setDirty(true);
+    }
+
     return { added, total: discovered.length };
   };
 
@@ -129,6 +139,7 @@ function App() {
       await saveChannel(currentChannel);
       setInitialChannel(cloneChannel(currentChannel));
       setStatus("Changes saved");
+      setDirty(false);
       setError(null);
       setChannels((prev) =>
         prev.map((ch) => (ch.id === currentChannel.id ? currentChannel : ch))
@@ -142,7 +153,11 @@ function App() {
   };
 
   const handleDiscard = () => {
+    if (!initialChannel) {
+      return;
+    }
     setCurrentChannel(cloneChannel(initialChannel));
+    setDirty(false);
   };
 
   return (
@@ -181,9 +196,9 @@ function App() {
         )}
       </main>
       <SaveBar
-        dirty={isDirty}
+        dirty={dirty}
         saving={saving}
-        disabled={!currentChannel || !isDirty}
+        disabled={!currentChannel || !dirty}
         status={status}
         onSave={handleSave}
         onDiscard={handleDiscard}
