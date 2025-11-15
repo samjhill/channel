@@ -5,7 +5,7 @@ import random
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
@@ -16,6 +16,10 @@ if (REPO_ROOT / "server").exists():
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.bumpers.render_up_next import render_up_next_bumper
+from scripts.bumpers.render_sassy_card import (
+    load_sassy_config as load_sassy_card_config,
+    render_sassy_card,
+)
 from server.api.settings_service import load_settings
 
 PLAYLIST_FILE = "/app/hls/playlist.txt"
@@ -84,6 +88,7 @@ def resolve_assets_root() -> str:
 
 ASSETS_ROOT = resolve_assets_root()
 BUMPERS_DIR = os.path.join(ASSETS_ROOT, "bumpers", "up_next")
+SASSY_BUMPERS_DIR = os.path.join(ASSETS_ROOT, "bumpers", "sassy")
 
 
 def parse_include_overrides() -> set[str]:
@@ -98,6 +103,8 @@ def parse_include_overrides() -> set[str]:
 
 
 ENV_INCLUDE_FILTER = parse_include_overrides()
+SASSY_CONFIG: Optional[Dict[str, Any]] = None
+SASSY_DECK: List[str] = []
 
 
 def resolve_channel(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -166,12 +173,17 @@ def order_episodes(episodes: List[str], mode: str) -> List[str]:
 
 def build_sequential_playlist(entries: Sequence[Dict[str, Any]]) -> List[str]:
     playlist: List[str] = []
+    total_episodes = sum(len(entry["episodes"]) for entry in entries)
+    processed = 0
     for entry in entries:
         show_label = entry["config"].get("label") or infer_show_title_from_path(
             entry["episodes"][0]
         )
         for episode in entry["episodes"]:
+            processed += 1
             append_episode_with_bumper(playlist, show_label, episode)
+            if processed < total_episodes:
+                maybe_append_sassy_card(playlist)
     return playlist
 
 
@@ -181,6 +193,8 @@ def build_weighted_random_playlist(entries: Sequence[Dict[str, Any]]) -> List[st
         {"config": entry["config"], "episodes": list(entry["episodes"]), "weight": entry["weight"]}
         for entry in entries
     ]
+    total_episodes = sum(len(entry["episodes"]) for entry in entries)
+    processed = 0
 
     while active:
         weights = [entry["weight"] for entry in active]
@@ -194,6 +208,9 @@ def build_weighted_random_playlist(entries: Sequence[Dict[str, Any]]) -> List[st
 
         show_label = chosen["config"].get("label") or infer_show_title_from_path(episode)
         append_episode_with_bumper(playlist, show_label, episode)
+        processed += 1
+        if processed < total_episodes:
+            maybe_append_sassy_card(playlist)
 
     return playlist
 
@@ -207,6 +224,70 @@ def append_episode_with_bumper(playlist: List[str], show_label: str, episode: st
     playlist.append(episode)
 
 
+def get_sassy_config() -> Dict[str, Any]:
+    global SASSY_CONFIG
+    if SASSY_CONFIG is None:
+        SASSY_CONFIG = load_sassy_card_config()
+    return SASSY_CONFIG
+
+
+def ensure_sassy_cards(cfg: Dict[str, Any]) -> List[str]:
+    os.makedirs(SASSY_BUMPERS_DIR, exist_ok=True)
+    logo_candidate = os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png")
+    logo_arg = logo_candidate if os.path.isfile(logo_candidate) else None
+
+    cards: List[str] = []
+    for idx, msg in enumerate(cfg.get("messages", []), start=1):
+        slug = safe_filename(msg) or f"card_{idx}"
+        destination = os.path.join(SASSY_BUMPERS_DIR, f"sassy_{slug}.mp4")
+        if not os.path.exists(destination):
+            try:
+                render_sassy_card(
+                    output_path=destination,
+                    logo_path=logo_arg,
+                    message=msg,
+                )
+            except Exception as exc:  # pragma: no cover
+                print(f"[Sassy] Failed to render card for '{msg[:30]}': {exc}")
+        if os.path.exists(destination):
+            cards.append(destination)
+    return cards
+
+
+def draw_sassy_card_from_deck(cfg: Dict[str, Any]) -> Optional[str]:
+    global SASSY_DECK
+    if not SASSY_DECK:
+        cards = ensure_sassy_cards(cfg)
+        if not cards:
+            return None
+        SASSY_DECK = cards[:]
+        random.shuffle(SASSY_DECK)
+    return SASSY_DECK.pop() if SASSY_DECK else None
+
+
+def maybe_generate_sassy_card() -> str | None:
+    cfg = get_sassy_config()
+    if not cfg.get("enabled", False):
+        return None
+
+    try:
+        probability = float(cfg.get("probability_between_episodes", 0.0))
+    except (TypeError, ValueError):
+        probability = 0.0
+
+    if probability <= 0 or random.random() > probability:
+        return None
+
+    card = draw_sassy_card_from_deck(cfg)
+    return card
+
+
+def maybe_append_sassy_card(playlist: List[str]) -> None:
+    card = maybe_generate_sassy_card()
+    if card:
+        playlist.append(card)
+
+
 def main():
     settings = load_settings()
     channel = resolve_channel(settings)
@@ -218,8 +299,17 @@ def main():
 
     channel_mode = channel.get("playback_mode", "sequential")
 
+    total_shows = len(shows)
+    if total_shows:
+        print(f"[Progress] Scanning {total_shows} shows from {media_root}", flush=True)
+
     entries = []
-    for show in shows:
+    for idx, show in enumerate(shows, start=1):
+        show_label = show.get("label") or show.get("id") or "Untitled show"
+        print(
+            f"[Progress] [{idx}/{total_shows}] Collecting episodes for {show_label}",
+            flush=True,
+        )
         episodes = collect_show_episodes(media_root, show)
         if not episodes:
             continue
@@ -247,6 +337,12 @@ def main():
         playlist = build_weighted_random_playlist(entries)
     else:
         playlist = build_sequential_playlist(entries)
+
+    print(
+        f"[Progress] Playlist ready with {len(playlist)} entries "
+        f"covering {len(entries)} shows.",
+        flush=True,
+    )
 
     os.makedirs(os.path.dirname(PLAYLIST_FILE), exist_ok=True)
     with open(PLAYLIST_FILE, "w", encoding="utf-8") as f:

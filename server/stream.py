@@ -78,19 +78,53 @@ def overlay_position_expr(position: str, margin: int) -> tuple[str, str]:
     return mapping.get(position, mapping["top-right"])
 
 
-def build_overlay_args():
+def probe_video_height(src: str) -> int | None:
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=height",
+                "-of",
+                "csv=p=0",
+                src,
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        height_str = result.stdout.strip()
+        return int(height_str) if height_str else None
+    except (subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def build_overlay_args(video_height: int | None):
     if not os.path.isfile(BUG_IMAGE_PATH):
         return [], False
 
     alpha = format_number(BUG_ALPHA)
-    height_fraction = format_number(BUG_HEIGHT_FRACTION)
     x_expr, y_expr = overlay_position_expr(BUG_POSITION, BUG_MARGIN)
 
-    filter_expr = (
-        f"[1]format=rgba,colorchannelmixer=aa={alpha}[logo_base];"
-        f"[logo_base][0]scale2ref=w=-1:h=ih2*{height_fraction}[logo][video];"
-        f"[video][logo]overlay=x={x_expr}:y={y_expr}:shortest=1[vout]"
-    )
+    stages = [
+        f"[1]format=rgba,colorchannelmixer=aa={alpha}[logo_base]",
+    ]
+
+    logo_stream = "[logo_base]"
+    if video_height:
+        target_height = max(2, int(video_height * BUG_HEIGHT_FRACTION))
+        if target_height % 2:
+            target_height += 1
+
+        stages.append(f"{logo_stream}scale=-1:{target_height}[logo_scaled]")
+        logo_stream = "[logo_scaled]"
+
+    stages.append(f"[0]{logo_stream}overlay=x={x_expr}:y={y_expr}:shortest=1[vout]")
+    filter_expr = ";".join(stages)
 
     args = [
         "-loop",
@@ -109,7 +143,8 @@ def build_overlay_args():
 
 def stream_file(src):
     print(f"Streaming: {src}", flush=True)
-    overlay_args, has_overlay = build_overlay_args()
+    video_height = probe_video_height(src)
+    overlay_args, has_overlay = build_overlay_args(video_height)
     cmd = [
         "ffmpeg",
         "-re",

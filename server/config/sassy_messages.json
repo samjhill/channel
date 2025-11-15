@@ -1,0 +1,29 @@
+{
+  "enabled": true,
+  "duration_seconds": 5,
+  "probability_between_episodes": 0.75,
+  "style": "hbn-cozy",
+  "messages": [
+    "You could be doing something productive right now.",
+    "Yes, it's still HBN. No, there's no plan.",
+    "This programming was selected by vibes, not science.",
+    "You said \"just one episode\" three episodes ago.",
+    "We promise the next one is the last one. Probably.",
+    "This channel is powered by procrastination and snacks.",
+    "No cliffhanger is accidental.",
+    "You're watching HBN because you avoid decisions.",
+    "Somewhere, your to-do list is crying.",
+    "If you can read this, it's not too late to go to bed.",
+    "HBN: Because choosing what to watch is exhausting.",
+    "You have excellent taste in background noise.",
+    "Yes, the algorithm is judging you right now.",
+    "This break brought to you by avoiding your email.",
+    "Your future self told us to tell you to hydrate.",
+    "Don't worry, the plot probably doesn't matter.",
+    "You're officially in 'just keep it on' mode.",
+    "No sponsors. Just chaos.",
+    "This is your sign to stretch. Or don't.",
+    "HBN: Turning \"I'll just put something on\" into a lifestyle."
+  ]
+}
+
