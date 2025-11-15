@@ -9,6 +9,7 @@ import {
 } from "./api";
 import ChannelSelector from "./components/ChannelSelector";
 import ChannelSettingsForm from "./components/ChannelSettingsForm";
+import ShowDiscovery from "./components/ShowDiscovery";
 import ShowTable from "./components/ShowTable";
 import SaveBar from "./components/SaveBar";
 
@@ -95,6 +96,29 @@ function App() {
     setCurrentChannel({ ...currentChannel, shows });
   };
 
+  const handleDiscoveredShows = (discovered: ShowConfig[]) => {
+    if (!currentChannel) {
+      return { added: 0, total: discovered.length };
+    }
+    const existingIndex = new Map(currentChannel.shows.map((show, idx) => [show.id, idx]));
+    const merged = [...currentChannel.shows];
+    let added = 0;
+
+    discovered.forEach((show) => {
+      const idx = existingIndex.get(show.id);
+      if (idx === undefined) {
+        merged.push(show);
+        existingIndex.set(show.id, merged.length - 1);
+        added += 1;
+      } else {
+        merged[idx] = { ...merged[idx], ...show };
+      }
+    });
+
+    setCurrentChannel({ ...currentChannel, shows: merged });
+    return { added, total: discovered.length };
+  };
+
   const handleSave = async () => {
     if (!currentChannel) {
       return;
@@ -140,6 +164,12 @@ function App() {
             <ChannelSettingsForm
               channel={currentChannel}
               onChange={handleChannelChange}
+            />
+            <ShowDiscovery
+              channelId={currentChannel.id}
+              mediaRoot={currentChannel.media_root}
+              disabled={!currentChannel.media_root}
+              onAddShows={handleDiscoveredShows}
             />
             <ShowTable
               shows={currentChannel.shows}

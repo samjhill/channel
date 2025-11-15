@@ -7,7 +7,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, List
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from .settings_service import (
@@ -66,21 +66,26 @@ def update_channel(channel_id: str, updated: Dict[str, Any]) -> Dict[str, Any]:
 
 
 @app.get("/api/channels/{channel_id}/shows/discover")
-def discover_channel_shows(channel_id: str) -> List[Dict[str, Any]]:
+def discover_channel_shows(
+    channel_id: str,
+    media_root: str | None = Query(
+        default=None, description="Override the channel's media root when scanning"
+    ),
+) -> List[Dict[str, Any]]:
     channel = get_channel(channel_id)
     if not channel:
         raise HTTPException(status_code=404, detail="Channel not found")
 
-    media_root = Path(channel.get("media_root") or "").expanduser()
-    if not media_root.exists():
+    base_path = Path(media_root or channel.get("media_root") or "").expanduser()
+    if not base_path.exists():
         return []
 
     shows: List[Dict[str, Any]] = []
     try:
-        for child in sorted(media_root.iterdir()):
+        for child in sorted(base_path.iterdir()):
             if not child.is_dir():
                 continue
-            rel_path = child.relative_to(media_root)
+            rel_path = child.relative_to(base_path)
             shows.append(
                 normalize_show(
                     {

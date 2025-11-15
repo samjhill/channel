@@ -54,3 +54,14 @@ export async function saveChannel(cfg: ChannelConfig): Promise<void> {
   await handleResponse(res);
 }
 
+export async function discoverShows(
+  id: string,
+  mediaRoot?: string
+): Promise<ShowConfig[]> {
+  const params = mediaRoot ? `?media_root=${encodeURIComponent(mediaRoot)}` : "";
+  const res = await fetch(
+    `${API_BASE}/api/channels/${encodeURIComponent(id)}/shows/discover${params}`
+  );
+  return handleResponse<ShowConfig[]>(res);
+}
+

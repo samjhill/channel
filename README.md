@@ -70,6 +70,8 @@ VITE_API_BASE=http://localhost:8000 npm run dev
 
 For production builds, run `npm run build` and serve the output from `ui/channel-admin/dist/`.
 
+The admin UI lets you update the channel media root (TV folder), adjust playback options, and run **Discover shows** to scan the folder for new series that can be toggled into the playlist.
+
 ### HBN “Up Next” Dynamic Bumpers
 
 The system can automatically create “Up Next” bumpers for each show in your playlist. On first run, when `generate_playlist.py` encounters a show it hasn’t seen before, it:

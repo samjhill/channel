@@ -10,6 +10,19 @@ function ChannelSettingsForm({ channel, onChange }: Props) {
     <section className="card">
       <h2>Playback Settings</h2>
       <div className="field">
+        <label htmlFor="media-root">TV Folder (media_root)</label>
+        <input
+          id="media-root"
+          type="text"
+          value={channel.media_root}
+          onChange={(evt) =>
+            onChange("media_root", evt.target.value)
+          }
+          placeholder="/media/tvchannel"
+        />
+        <small>Absolute path inside the server where show folders live.</small>
+      </div>
+      <div className="field">
         <label htmlFor="playback-mode">Playback Mode</label>
         <select
           id="playback-mode"
