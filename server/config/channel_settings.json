@@ -4,7 +4,7 @@
       "id": "hbn-main",
       "name": "Hillside Broadcasting Network",
       "enabled": true,
-      "media_root": "/media/tvchannel",
+      "media_root": "/Volumes/media/tv",
       "playback_mode": "sequential",
       "loop_entire_library": true,
       "shows": [
@@ -12,7 +12,7 @@
           "id": "office",
           "label": "The Office",
           "path": "The Office",
-          "include": true,
+          "include": false,
           "playback_mode": "inherit",
           "weight": 1.0
         },
@@ -28,7 +28,455 @@
           "id": "seinfeld",
           "label": "Seinfeld",
           "path": "Seinfeld",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "anthony-bourdain-no-reservations",
+          "label": "Anthony Bourdain - No Reservations",
+          "path": "Anthony Bourdain - No Reservations",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "anthony-bourdain-parts-unknown",
+          "label": "Anthony Bourdain - Parts Unknown",
+          "path": "Anthony Bourdain - Parts Unknown",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "arrested-development",
+          "label": "Arrested Development",
+          "path": "Arrested Development",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "as-told-by-ginger",
+          "label": "As Told By Ginger",
+          "path": "As Told By Ginger",
           "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "avatar-the-last-airbender",
+          "label": "Avatar - The Last Airbender",
+          "path": "Avatar - The Last Airbender",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "banshee",
+          "label": "Banshee",
+          "path": "Banshee",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "batman-the-animated-series",
+          "label": "Batman The Animated Series",
+          "path": "Batman The Animated Series",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "bob-s-burgers",
+          "label": "Bob's Burgers",
+          "path": "Bob's Burgers",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "brooklyn-nine-nine",
+          "label": "Brooklyn Nine-Nine",
+          "path": "Brooklyn Nine-Nine",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "cops",
+          "label": "Cops",
+          "path": "Cops",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "cowboy-bebop",
+          "label": "Cowboy Bebop",
+          "path": "Cowboy Bebop",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "doug",
+          "label": "Doug",
+          "path": "Doug",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "fargo",
+          "label": "Fargo",
+          "path": "Fargo",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "for-all-mankind",
+          "label": "For All Mankind",
+          "path": "For All Mankind",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "foundation-2021",
+          "label": "Foundation (2021)",
+          "path": "Foundation (2021)",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "futurama",
+          "label": "Futurama",
+          "path": "Futurama",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "gargoyles",
+          "label": "Gargoyles",
+          "path": "Gargoyles",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "hey-arnold",
+          "label": "Hey Arnold!",
+          "path": "Hey Arnold!",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "invader-zim",
+          "label": "Invader ZIM",
+          "path": "Invader ZIM",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "jackie-chan-adventures",
+          "label": "Jackie Chan Adventures",
+          "path": "Jackie Chan Adventures",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "kim-possible",
+          "label": "Kim Possible",
+          "path": "Kim Possible",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "legion",
+          "label": "Legion",
+          "path": "Legion",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "m-a-s-h",
+          "label": "M-A-S-H",
+          "path": "M-A-S-H",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "mash-s04e03-ich-bin-colonel-potter-german-dl-fs-dvdrip-xvid-internal-tmsf",
+          "label": "MASH.S04E03.Ich.bin.Colonel.Potter.German.DL.FS.DVDRip.XviD.iNTERNAL-TMSF",
+          "path": "MASH.S04E03.Ich.bin.Colonel.Potter.German.DL.FS.DVDRip.XviD.iNTERNAL-TMSF",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "mad-men",
+          "label": "Mad Men",
+          "path": "Mad Men",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "men-in-black-the-series",
+          "label": "Men in Black - The Series",
+          "path": "Men in Black - The Series",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "mr-robot",
+          "label": "Mr. Robot",
+          "path": "Mr. Robot",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "parks-and-recreation",
+          "label": "Parks and Recreation",
+          "path": "Parks and Recreation",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "reno-911",
+          "label": "Reno 911!",
+          "path": "Reno 911!",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "robot-chicken",
+          "label": "Robot Chicken",
+          "path": "Robot Chicken",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "sailor-moon",
+          "label": "Sailor Moon",
+          "path": "Sailor Moon",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "samurai-jack",
+          "label": "Samurai Jack",
+          "path": "Samurai Jack",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "severance",
+          "label": "Severance",
+          "path": "Severance",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "south-park",
+          "label": "South Park",
+          "path": "South Park",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "spider-man-1994",
+          "label": "Spider-Man (1994)",
+          "path": "Spider-Man (1994)",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "star-trek-deep-space-nine",
+          "label": "Star Trek Deep Space Nine",
+          "path": "Star Trek Deep Space Nine",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "star-trek-voyager",
+          "label": "Star Trek Voyager",
+          "path": "Star Trek Voyager",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "teen-titans",
+          "label": "Teen Titans",
+          "path": "Teen Titans",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-adventures-of-jimmy-neutron-boy-genius",
+          "label": "The Adventures of Jimmy Neutron - Boy Genius",
+          "path": "The Adventures of Jimmy Neutron - Boy Genius",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-americans-2013",
+          "label": "The Americans (2013)",
+          "path": "The Americans (2013)",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-chosen",
+          "label": "The Chosen",
+          "path": "The Chosen",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-expanse",
+          "label": "The Expanse",
+          "path": "The Expanse",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-fairly-oddparents",
+          "label": "The Fairly OddParents",
+          "path": "The Fairly OddParents",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-knick",
+          "label": "The Knick",
+          "path": "The Knick",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-last-of-us",
+          "label": "The Last of Us",
+          "path": "The Last of Us",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-layover-with-anthony-bourdain",
+          "label": "The Layover with Anthony Bourdain",
+          "path": "The Layover with Anthony Bourdain",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-magic-school-bus",
+          "label": "The Magic School Bus",
+          "path": "The Magic School Bus",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-oa",
+          "label": "The OA",
+          "path": "The OA",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-office-us",
+          "label": "The Office (US)",
+          "path": "The Office (US)",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-powerpuff-girls",
+          "label": "The Powerpuff Girls",
+          "path": "The Powerpuff Girls",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-west-wing",
+          "label": "The West Wing",
+          "path": "The West Wing",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "the-wheel-of-time",
+          "label": "The Wheel of Time",
+          "path": "The Wheel of Time",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "twin-peaks",
+          "label": "Twin Peaks",
+          "path": "Twin Peaks",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "x-men-the-animated-series",
+          "label": "X-Men The Animated Series",
+          "path": "X-Men The Animated Series",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "you",
+          "label": "You",
+          "path": "You",
+          "include": false,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        },
+        {
+          "id": "movies",
+          "label": "movies",
+          "path": "movies",
+          "include": false,
           "playback_mode": "inherit",
           "weight": 1.0
         }
@@ -43,5 +491,3 @@
     }
   ]
 }
-
-

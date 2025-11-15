@@ -137,10 +137,72 @@ def _is_hatemail(text: str) -> bool:
 
 
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
+    """
+    Load a font that supports Unicode characters like em dashes.
+    Tries multiple common system fonts before falling back to default.
+    """
+    import platform
+    system = platform.system()
+    
+    # List of fonts to try, in order of preference
+    font_paths = []
+    
+    if system == "Darwin":  # macOS
+        font_paths = [
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "/Library/Fonts/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Helvetica.ttc",
+        ]
+    elif system == "Linux":
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+        ]
+    
+    # Try common fallback paths
+    font_paths.extend([
+        "DejaVuSans.ttf",
+        "Arial.ttf",
+    ])
+    
+    for font_path in font_paths:
+        try:
+            font = ImageFont.truetype(font_path, size)
+            # Test if font supports em dash by checking if it can measure it
+            try:
+                font.getbbox("—")
+                return font
+            except Exception:
+                # Font loaded but might not support em dash, try next
+                continue
+        except (OSError, IOError):
+            continue
+    
+    # Last resort: default font (may not support em dashes)
+    return ImageFont.load_default()
+
+
+def _normalize_text_for_font(text: str, font: ImageFont.ImageFont) -> str:
+    """
+    Normalize text to replace unsupported characters.
+    Replaces em dashes with regular dashes if the font doesn't support them.
+    """
     try:
-        return ImageFont.truetype("DejaVuSans.ttf", size)
-    except OSError:
-        return ImageFont.load_default()
+        # Test if font supports em dash by checking if it can measure it properly
+        bbox = font.getbbox("—")
+        # Check if the bbox is valid (has non-zero width)
+        if bbox and len(bbox) >= 4:
+            width = bbox[2] - bbox[0]
+            # If width is reasonable (not zero or extremely small), font likely supports it
+            if width > 0:
+                return text  # Font supports em dash, return as-is
+    except Exception:
+        pass
+    
+    # Font doesn't support em dash, replace with regular dash
+    return text.replace("—", "-")
 
 
 def _wrap_lines(
@@ -305,6 +367,10 @@ def render_sassy_card(
         logo_path = str(logo_candidate) if logo_candidate.exists() else None
 
     # Calculate optimal font size to fill the screen
+    # First load a test font to normalize text if needed
+    test_font = _load_font(style.font_size)
+    text = _normalize_text_for_font(text, test_font)
+    
     font_size = _calculate_optimal_font_size(text, width, height, style)
     font = _load_font(font_size)
 

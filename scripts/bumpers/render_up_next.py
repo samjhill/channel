@@ -20,6 +20,41 @@ STEEL_BLUE = "#475D92"
 ROSE_MAGENTA = "#DA5C86"
 PAPER_WHITE = "#F8F5E9"
 PEACH = "#FFB267"
+GOLDENROD = "#F6C667"
+NIGHT_INDIGO = "#1F2D50"
+SEAFOAM = "#83F6C7"
+CORAL = "#FF6F61"
+
+THEME_PRESETS = [
+    {
+        "name": "sunset-glow",
+        "top": STEEL_BLUE,
+        "bottom": ROSE_MAGENTA,
+        "accent": PEACH,
+        "pattern": PAPER_WHITE,
+    },
+    {
+        "name": "midnight-circuit",
+        "top": NIGHT_INDIGO,
+        "bottom": STEEL_BLUE,
+        "accent": SEAFOAM,
+        "pattern": "#9CC7FF",
+    },
+    {
+        "name": "retro-warmth",
+        "top": "#402A52",
+        "bottom": CORAL,
+        "accent": GOLDENROD,
+        "pattern": "#FFD5C2",
+    },
+    {
+        "name": "citrus-pop",
+        "top": "#263238",
+        "bottom": "#FBC02D",
+        "accent": "#FF7043",
+        "pattern": "#FFF8E1",
+    },
+]
 
 LOGO_DEFAULT_PATH = "assets/branding/hbn_logo_bug.png"
 
@@ -88,6 +123,67 @@ def _adjust_color(color: str, delta: float) -> str:
     return "#{:02x}{:02x}{:02x}".format(*rgb)
 
 
+def choose_theme(rng: random.Random) -> dict:
+    theme = rng.choice(THEME_PRESETS).copy()
+    # Slightly perturb colors to keep things fresh
+    theme["top"] = _adjust_color(theme["top"], rng.uniform(-0.08, 0.08))
+    theme["bottom"] = _adjust_color(theme["bottom"], rng.uniform(-0.08, 0.08))
+    theme["accent"] = _adjust_color(theme["accent"], rng.uniform(-0.06, 0.06))
+    theme["pattern"] = _adjust_color(theme["pattern"], rng.uniform(-0.04, 0.04))
+    return theme
+
+
+def create_pattern_layer(
+    width: int, height: int, color: str, opacity: float, rng: random.Random
+) -> Image.Image:
+    layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+    alpha = int(255 * clamp(opacity, 0.02, 0.35))
+    rgba = (*ImageColor.getrgb(color), alpha)
+
+    pattern_type = rng.choice(["wavy", "dots", "diagonal"])
+    spacing = rng.randint(40, 80)
+
+    if pattern_type == "wavy":
+        amplitude = rng.uniform(6, 14)
+        frequency = rng.uniform(0.008, 0.014)
+        for y in range(-spacing, height + spacing, spacing):
+            points = []
+            for x in range(-spacing, width + spacing, 8):
+                offset = amplitude * math.sin((x * frequency) + (y * 0.05))
+                points.append((x, y + offset))
+            draw.line(points, fill=rgba, width=3)
+    elif pattern_type == "dots":
+        radius = rng.randint(6, 10)
+        for y in range(0, height + spacing, spacing):
+            for x in range(0, width + spacing, spacing):
+                jitter_x = rng.uniform(-spacing * 0.2, spacing * 0.2)
+                jitter_y = rng.uniform(-spacing * 0.2, spacing * 0.2)
+                draw.ellipse(
+                    (
+                        x + jitter_x - radius,
+                        y + jitter_y - radius,
+                        x + jitter_x + radius,
+                        y + jitter_y + radius,
+                    ),
+                    fill=rgba,
+                    outline=None,
+                )
+    else:  # diagonal
+        for offset in range(-height, width, spacing):
+            draw.line(
+                (
+                    offset,
+                    0,
+                    offset + height,
+                    height,
+                ),
+                fill=rgba,
+                width=3,
+            )
+    return layer
+
+
 def add_grain(
     image: Image.Image, opacity: float = 0.25, noise_rng: Optional[np.random.Generator] = None
 ) -> Image.Image:
@@ -135,6 +231,7 @@ def render_up_next_bumper(
     fps: int = 30,
     logo_path: str = LOGO_DEFAULT_PATH,
     seed: Optional[int] = None,
+    episode_label: Optional[str] = None,
 ) -> None:
     """
     Render a 6-second 'Up Next' bumper video for the given show_title.
@@ -152,6 +249,7 @@ def render_up_next_bumper(
     rng = random.Random(seed)
     noise_rng = np.random.default_rng(rng.getrandbits(64))
 
+    theme = choose_theme(rng)
     grain_opacity = clamp(0.22 + rng.uniform(-0.06, 0.06), 0.08, 0.35)
     brightness_amp = 0.012 + rng.uniform(0, 0.012)
     brightness_freq = 0.25 + rng.uniform(-0.08, 0.1)
@@ -161,8 +259,18 @@ def render_up_next_bumper(
     divider_width_factor = clamp(0.33 + rng.uniform(-0.04, 0.05), 0.25, 0.45)
     slide_base = 22 + rng.uniform(0, 12)
     logo_final_scale = 0.98 + rng.uniform(-0.02, 0.04)
-    top_gradient = _adjust_color(STEEL_BLUE, rng.uniform(-0.05, 0.05))
-    bottom_gradient = _adjust_color(ROSE_MAGENTA, rng.uniform(-0.05, 0.05))
+    top_gradient = theme["top"]
+    bottom_gradient = theme["bottom"]
+    pattern_layer_base = create_pattern_layer(
+        width,
+        height,
+        theme["pattern"],
+        opacity=0.12 + rng.uniform(-0.04, 0.04),
+        rng=rng,
+    )
+    pattern_freq = rng.uniform(0.18, 0.35)
+    pattern_phase = rng.uniform(0, 2 * math.pi)
+    pattern_amp = rng.uniform(0.25, 0.45)
 
     num_frames = int(duration_sec * fps)
 
@@ -178,6 +286,7 @@ def render_up_next_bumper(
     draw_dummy = ImageDraw.Draw(Image.new("RGB", (width, height)))
     show_title_clean = show_title.strip()
     show_title_display = show_title_clean.title()
+    episode_label_display = (episode_label or "").strip()
     title_font = compute_dynamic_font(
         draw_dummy,
         show_title_display,
@@ -186,6 +295,16 @@ def render_up_next_bumper(
         min_size=42,
         font_candidates=FONT_CANDIDATES_BOLD,
     )
+    episode_font = None
+    if episode_label_display:
+        episode_font = compute_dynamic_font(
+            draw_dummy,
+            episode_label_display,
+            target_width=width * 0.65,
+            base_size=54,
+            min_size=28,
+            font_candidates=FONT_CANDIDATES_REGULAR,
+        )
 
     logo_anim = AnimationWindow(start=0.0, duration=0.6)
     text_anim = AnimationWindow(start=0.2, duration=0.8)
@@ -207,6 +326,19 @@ def render_up_next_bumper(
                 ).astype(np.uint8)
             )
             frame = Image.fromarray(frame_np).convert("RGBA")
+            pattern_factor = clamp(
+                0.6
+                + pattern_amp * math.sin(2 * math.pi * pattern_freq * t + pattern_phase),
+                0.1,
+                1.0,
+            )
+
+            pattern_layer = pattern_layer_base.copy()
+            alpha_channel = pattern_layer.split()[3].point(
+                lambda a: int(clamp(a * pattern_factor, 0, 255))
+            )
+            pattern_layer.putalpha(alpha_channel)
+            frame = Image.alpha_composite(frame, pattern_layer)
             frame = add_grain(frame, opacity=grain_opacity, noise_rng=noise_rng)
             draw = ImageDraw.Draw(frame)
 
@@ -242,6 +374,7 @@ def render_up_next_bumper(
                 up_next_y = int(height * 0.32) + slide_offset + wiggle
                 divider_y = up_next_y + 120
                 title_y = divider_y + 60
+                subtitle_y = title_y + 96
 
                 upnext_fill = (*ImageColor.getrgb(PAPER_WHITE), int(255 * text_alpha))
                 draw.text(
@@ -253,7 +386,10 @@ def render_up_next_bumper(
                 )
 
                 divider_width = int(width * divider_width_factor)
-                line_color = (*ImageColor.getrgb(PEACH), int(255 * text_alpha))
+                line_color = (
+                    *ImageColor.getrgb(theme["accent"]),
+                    int(255 * text_alpha),
+                )
                 draw.line(
                     (
                         center_x - divider_width // 2,
@@ -276,6 +412,15 @@ def render_up_next_bumper(
                     fill=title_fill,
                     anchor="ma",
                 )
+                if episode_label_display and episode_font:
+                    subtitle_fill = (*ImageColor.getrgb(PAPER_WHITE), int(255 * text_alpha))
+                    draw.text(
+                        (center_x, subtitle_y),
+                        episode_label_display,
+                        font=episode_font,
+                        fill=subtitle_fill,
+                        anchor="ma",
+                    )
 
             # Fade to black
             fade_amount = fade_out_anim.progress(t)

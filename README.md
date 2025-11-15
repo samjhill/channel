@@ -107,6 +107,10 @@ python -m scripts.bumpers.cli_up_next \
 
 Add `--seed <int>` if you want to reproduce the exact randomized look; omitting it yields a fresh variation each render.
 
+Episode filenames that contain tokens like `S02E05`, `2x05`, or live inside folders such as `Season 02` automatically add a subtitle line to the bumper so viewers see the exact season and episode numbers with every “Up Next” card. Each render also picks a randomized on-brand gradient + pattern treatment, so the bumpers feel lively without clashing with channel colors.
+
+When you run `python server/generate_playlist.py`, the generator immediately writes a short “seed” chunk of upcoming episodes (default 50) straight to the playlist so the stream can start without waiting for bumper renders. The script then keeps running, rendering bumpers in the background and appending the fully-produced entries after the seed chunk.
+
 ### Sassy Cards
 
 Between episodes the playlist can optionally splice in short “sassy card” bumpers (think Adult Swim vibes). Configure them via `server/config/sassy_messages.json`:
@@ -117,11 +121,19 @@ Between episodes the playlist can optionally splice in short “sassy card” bu
 
 On playlist generation the renderer creates one MP4 per message under `assets/bumpers/sassy/` (only rerendering when a file is missing) and then deals them out from a shuffled deck so every phrase appears once before repeating. Tweak the JSON and rerun `generate_playlist.py` (or hit the Admin API “Save” button) to apply changes immediately.
 
+### Network Branding Bumpers
+
+Full network branding bumpers featuring the complete HBN logo are automatically inserted periodically (approximately once per hour, or roughly every 25-30 episodes). These 8-second bumpers display the full logo with "HILLSIDE BROADCASTING NETWORK" and station info, animated with subtle fade-ins and scale effects. Each bumper is mixed with a randomly selected track from your music library for a polished, professional feel.
+
+The network bumper is generated once on first playlist build and stored at `assets/bumpers/network/network_brand.mp4`. It uses the full logo SVG (or PNG fallback) from `assets/branding/hbn_logo_bug.svg`.
+
 ### Playlist Generation Details
 
 - **Sequential mode**: shows are round-robined so each pass through the playlist includes one episode per included show before looping back (keeps the stream varied even with large seasons).
 - **Random mode**: still uses the existing weighted random logic based on per-show `weight`.
 - Playlist + playhead files live under `/app/hls/` when running in Docker. During local development (outside the container) the generator/streamer fall back to `server/hls/`.
+- For faster test iterations, playlist generation stops after the first 500 episodes by default. Override with `PLAYLIST_EPISODE_LIMIT=<int>` if you need longer queues.
+- Control how many bumper-free “seed” episodes get written immediately with `PLAYLIST_SEED_LIMIT=<int>` (defaults to 50). Set it to `0` if you’d rather block until every bumper is rendered.
 
 ## 🧪 Local Mac Testing (no Raspberry Pi required)
 
