@@ -125,6 +125,17 @@ def pick_sassy_message(cfg: Optional[dict] = None) -> Optional[str]:
     return random.choice(messages)
 
 
+def _is_hatemail(text: str) -> bool:
+    """
+    Detect if a message is hatemail (starts with quotes and ends with —Name pattern).
+    """
+    text = text.strip()
+    # Check if it starts with a quote and contains an em dash or regular dash followed by text
+    if text.startswith('"') and ("—" in text or " - " in text):
+        return True
+    return False
+
+
 def _load_font(size: int) -> ImageFont.FreeTypeFont:
     try:
         return ImageFont.truetype("DejaVuSans.ttf", size)
@@ -162,6 +173,60 @@ def _wrap_lines(
         lines.append(" ".join(current))
 
     return lines
+
+
+def _calculate_optimal_font_size(
+    text: str,
+    width: int,
+    height: int,
+    style: CardStyle,
+    min_size: int = 24,
+    max_size: int = 200,
+) -> int:
+    """
+    Calculate the optimal font size to fill the screen while keeping text readable.
+    Uses binary search to find the largest font size that fits.
+    """
+    # Account for logo if present
+    available_height = height
+    if style.include_logo:
+        available_height = int(height * 0.85)  # Reserve space for logo
+    
+    # Account for padding
+    available_height = int(available_height * 0.9)  # 10% padding
+    max_text_width = int(width * style.max_text_width_ratio)
+    
+    # Create a temporary image and draw context for measurements
+    temp_img = Image.new("RGB", (width, height))
+    temp_draw = ImageDraw.Draw(temp_img)
+    
+    best_size = min_size
+    low, high = min_size, max_size
+    
+    while low <= high:
+        mid = (low + high) // 2
+        font = _load_font(mid)
+        
+        # Wrap text with this font size
+        lines = _wrap_lines(text, temp_draw, font, max_text_width)
+        
+        if not lines:
+            break
+        
+        # Calculate total height needed
+        bbox = font.getbbox("Ag")
+        line_height = bbox[3] - bbox[1]
+        line_spacing = int(line_height * 0.3)  # 30% of line height for spacing
+        total_text_height = len(lines) * line_height + max(len(lines) - 1, 0) * line_spacing
+        
+        # Check if it fits
+        if total_text_height <= available_height:
+            best_size = mid
+            low = mid + 1  # Try larger
+        else:
+            high = mid - 1  # Too big, try smaller
+    
+    return best_size
 
 
 def _draw_background(canvas: Image.Image, style: CardStyle) -> None:
@@ -239,7 +304,9 @@ def render_sassy_card(
         logo_candidate = assets_root / "branding" / "hbn_logo_bug.png"
         logo_path = str(logo_candidate) if logo_candidate.exists() else None
 
-    font = _load_font(style.font_size)
+    # Calculate optimal font size to fill the screen
+    font_size = _calculate_optimal_font_size(text, width, height, style)
+    font = _load_font(font_size)
 
     with tempfile.TemporaryDirectory(prefix="sassy_card_") as tmp_dir:
         tmp_dir_path = Path(tmp_dir)
@@ -254,7 +321,8 @@ def render_sassy_card(
 
         bbox = font.getbbox("Ag")
         line_height = bbox[3] - bbox[1]
-        total_text_height = len(lines) * line_height + max(len(lines) - 1, 0) * 12
+        line_spacing = int(line_height * 0.3)  # 30% of line height for spacing
+        total_text_height = len(lines) * line_height + max(len(lines) - 1, 0) * line_spacing
 
         if style.text_align == "left":
             x_pos = int(width * 0.08)
@@ -271,7 +339,7 @@ def render_sassy_card(
             else:
                 x = (width - line_width) // 2
             draw.text((x, y_start), line, font=font, fill=style.text_color)
-            y_start += line_height + 12
+            y_start += line_height + line_spacing
 
         if style.include_logo and logo_path:
             _paste_logo(img, Path(logo_path))
