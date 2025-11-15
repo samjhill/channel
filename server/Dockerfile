@@ -13,7 +13,9 @@ RUN pip3 install --no-cache-dir watchdog pillow numpy fastapi uvicorn[standard]
 WORKDIR /app
 
 COPY server/generate_playlist.py server/stream.py server/entrypoint.sh ./
+COPY server/playlist_service.py /app/playlist_service.py
 COPY server/__init__.py /app/server/__init__.py
+COPY server/playlist_service.py /app/server/playlist_service.py
 COPY server/api /app/server/api
 COPY server/nginx.conf /etc/nginx/nginx.conf
 COPY server/config /app/config
@@ -25,4 +27,3 @@ RUN chmod +x entrypoint.sh && mkdir -p /app/hls
 EXPOSE 8080
 
 CMD ["/app/entrypoint.sh"]
-
