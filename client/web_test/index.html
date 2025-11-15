@@ -37,7 +37,14 @@
       const streamUrl = 'http://localhost:8080/channel/stream.m3u8';
 
       if (window.Hls && Hls.isSupported()) {
-        const hls = new Hls();
+        const hlsConfig = {
+          maxBufferLength: 60,
+          maxMaxBufferLength: 240,
+          backBufferLength: 120,
+          liveSyncDuration: 12,
+          liveMaxLatencyDuration: 60
+        };
+        const hls = new Hls(hlsConfig);
         hls.loadSource(streamUrl);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, function () {
