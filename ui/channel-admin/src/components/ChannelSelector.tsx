@@ -9,7 +9,7 @@ interface Props {
 
 function ChannelSelector({ channels, selectedId, disabled, onSelect }: Props) {
   return (
-    <div className="field">
+    <div className="channel-selector">
       <label htmlFor="channel-select">Channel</label>
       <select
         id="channel-select"

@@ -36,13 +36,13 @@ function ChannelSettingsForm({ channel, onChange }: Props) {
         </select>
       </div>
       <div className="field">
-        <label>
+        <label className="checkbox-label">
           <input
             type="checkbox"
             checked={channel.loop_entire_library}
             onChange={(evt) => onChange("loop_entire_library", evt.target.checked)}
           />
-          &nbsp;Loop entire library
+          <span>Loop entire library</span>
         </label>
         <small>Restart from the beginning when the playlist reaches the end.</small>
       </div>

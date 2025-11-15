@@ -112,12 +112,19 @@ def is_sassy_card(entry: str) -> bool:
     return "/bumpers/sassy/" in token
 
 
+def is_network_bumper(entry: str) -> bool:
+    token = _normalize_token(entry)
+    return "/bumpers/network/" in token
+
+
 def entry_type(entry: str) -> str:
     token = _normalize_token(entry)
     if is_up_next_bumper(entry):
         return "bumper"
     if is_sassy_card(entry):
         return "sassy"
+    if is_network_bumper(entry):
+        return "network"
     if token.endswith(VIDEO_EXTENSIONS):
         return "episode"
     return "other"
@@ -129,7 +136,7 @@ def is_episode_entry(entry: str) -> bool:
 
 def build_playlist_segments(entries: Sequence[str]) -> List[Dict[str, Any]]:
     """
-    Collapse the low-level playlist entries (bumpers + episodes + cards) into
+    Collapse the low-level playlist entries (bumpers + episodes + cards + network bumpers) into
     logical episode segments so they can be re-ordered safely.
     """
 
@@ -149,6 +156,8 @@ def build_playlist_segments(entries: Sequence[str]) -> List[Dict[str, Any]]:
 
         end = idx + 1
         if end < total and is_sassy_card(entries[end]):
+            end += 1
+        if end < total and is_network_bumper(entries[end]):
             end += 1
 
         segment_entries = list(entries[start:end])

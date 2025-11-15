@@ -44,10 +44,10 @@ function ShowDiscovery({ channelId, mediaRoot, disabled, onAddShows }: Props) {
 
   return (
     <section className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="discovery-header">
         <div>
-          <h2 style={{ margin: 0 }}>Show Discovery</h2>
-          <p style={{ margin: "0.25rem 0 0", color: "#475569" }}>
+          <h2>Show Discovery</h2>
+          <p className="muted">
             Scan the media folder for show directories and add them to this channel.
           </p>
         </div>
@@ -59,10 +59,15 @@ function ShowDiscovery({ channelId, mediaRoot, disabled, onAddShows }: Props) {
           {loading ? "Scanning…" : "Discover shows"}
         </button>
       </div>
-      {(message || error) && (
-        <p style={{ marginTop: "0.5rem", color: error ? "#dc2626" : "#0f172a" }}>
-          {error || message}
-        </p>
+      {error && (
+        <div className="discovery-message error">
+          {error}
+        </div>
+      )}
+      {message && !error && (
+        <div className="discovery-message success">
+          {message}
+        </div>
       )}
     </section>
   );

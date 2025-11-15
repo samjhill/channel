@@ -5,12 +5,26 @@ import subprocess
 import time
 from pathlib import Path
 
-from playlist_service import (
-    entry_type,
-    load_playlist_entries,
-    resolve_playlist_path,
-    save_playhead_state,
-)
+try:
+    from playlist_service import (
+        entry_type,
+        load_playlist_entries,
+        resolve_playlist_path,
+        save_playhead_state,
+    )
+except ImportError:
+    # Fallback for local development outside Docker
+    import sys
+    from pathlib import Path
+    repo_root = Path(__file__).resolve().parent
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from server.playlist_service import (
+        entry_type,
+        load_playlist_entries,
+        resolve_playlist_path,
+        save_playhead_state,
+    )
 
 PLAYLIST = str(resolve_playlist_path())
 OUTPUT = "/app/hls/stream.m3u8"

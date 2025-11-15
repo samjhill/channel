@@ -170,14 +170,16 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header className="card">
-        <h1>Channel Admin</h1>
-        <ChannelSelector
-          channels={channels}
-          selectedId={selectedId}
-          onSelect={setSelectedId}
-          disabled={loading}
-        />
+      <header className="app-header">
+        <div className="header-content">
+          <h1>Channel Admin</h1>
+          <ChannelSelector
+            channels={channels}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
+            disabled={loading}
+          />
+        </div>
         <div className="view-switch">
           <button
             className={`tab-button ${activeView === "settings" ? "active" : ""}`}
@@ -194,8 +196,14 @@ function App() {
         </div>
       </header>
       <main className="app-content">
-        {error && <div className="card" style={{ color: "#dc2626" }}>{error}</div>}
-        {!error && loading && <div className="card">Loading channel…</div>}
+        {error && (
+          <div className="card error-message">
+            <strong>Error:</strong> {error}
+          </div>
+        )}
+        {!error && loading && (
+          <div className="card loading-message">Loading channel…</div>
+        )}
         {!loading && currentChannel && activeView === "settings" && (
           <>
             <ChannelSettingsForm

@@ -25,16 +25,16 @@ function ShowTable({ shows, channelMode, onChange, onBulkAction }: Props) {
 
   return (
     <section className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h2>Shows</h2>
-        <div style={{ display: "flex", gap: "0.5rem" }}>
-          <button className="btn btn-secondary" onClick={() => onBulkAction("selectAll")}>
+      <div className="shows-header">
+        <h2>Shows ({shows.length})</h2>
+        <div className="shows-actions">
+          <button className="btn btn-light" onClick={() => onBulkAction("selectAll")}>
             Select all
           </button>
-          <button className="btn btn-secondary" onClick={() => onBulkAction("deselectAll")}>
+          <button className="btn btn-light" onClick={() => onBulkAction("deselectAll")}>
             Deselect all
           </button>
-          <button className="btn btn-secondary" onClick={() => onBulkAction("normalizeWeights")}>
+          <button className="btn btn-light" onClick={() => onBulkAction("normalizeWeights")}>
             Normalize weights
           </button>
         </div>
