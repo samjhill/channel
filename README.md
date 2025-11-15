@@ -72,7 +72,7 @@ For production builds, run `npm run build` and serve the output from `ui/channel
 
 The admin UI lets you update the channel media root (TV folder), adjust playback options, and run **Discover shows** to scan the folder for new series that can be toggled into the playlist. Saving settings triggers a media-server restart so the stream picks up new changes.
 
-> **Auto restart:** Set `CHANNEL_RESTART_COMMAND` before launching the API (e.g. `export CHANNEL_RESTART_COMMAND="docker restart tvchannel"`). When unset, the API falls back to regenerating the playlist so changes apply on the next loop.
+> **Auto restart:** By default the API runs `docker restart tvchannel` after every save (if Docker is installed). Override the container name with `CHANNEL_DOCKER_CONTAINER`, or supply a custom command via `CHANNEL_RESTART_COMMAND`. If neither works, the API falls back to regenerating the playlist so changes apply on the next playback loop.
 
 ### HBN “Up Next” Dynamic Bumpers
 
