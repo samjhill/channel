@@ -5,7 +5,14 @@ import subprocess
 import time
 from pathlib import Path
 
-PLAYLIST = "/app/hls/playlist.txt"
+from playlist_service import (
+    entry_type,
+    load_playlist_entries,
+    resolve_playlist_path,
+    save_playhead_state,
+)
+
+PLAYLIST = str(resolve_playlist_path())
 OUTPUT = "/app/hls/stream.m3u8"
 DEFAULT_ASSETS_ROOT = "/app/assets"
 DEFAULT_BUG_IMAGE = "branding/hbn_logo_bug.png"
@@ -53,10 +60,8 @@ BUG_POSITION = os.environ.get("HBN_BUG_POSITION", "top-right").lower()
 
 
 def load_playlist():
-    if not os.path.exists(PLAYLIST):
-        raise FileNotFoundError(f"Playlist not found at {PLAYLIST}")
-    with open(PLAYLIST, "r", encoding="utf-8") as f:
-        return [line.strip() for line in f if line.strip()]
+    entries, mtime = load_playlist_entries()
+    return [entry for entry in entries if entry], mtime
 
 
 def format_number(value: float) -> str:
@@ -182,10 +187,24 @@ def stream_file(src):
     subprocess.run(cmd, check=False)
 
 
+def record_playhead(src: str, index: int, playlist_mtime: float) -> None:
+    state = {
+        "current_path": src,
+        "current_index": index,
+        "playlist_mtime": playlist_mtime,
+        "playlist_path": PLAYLIST,
+        "entry_type": entry_type(src),
+    }
+    save_playhead_state(state)
+
+
 def run_stream():
+    last_played: str | None = None
+    next_index = 0
+
     while True:
         try:
-            files = load_playlist()
+            files, playlist_mtime = load_playlist()
         except FileNotFoundError as exc:
             print(exc, flush=True)
             time.sleep(5)
@@ -196,8 +215,39 @@ def run_stream():
             time.sleep(10)
             continue
 
-        for src in files:
+        if last_played:
+            try:
+                next_index = files.index(last_played) + 1
+            except ValueError:
+                next_index = 0
+        else:
+            next_index = 0
+
+        while files:
+            if next_index >= len(files):
+                next_index = 0
+
+            src = files[next_index]
+            record_playhead(src, next_index, playlist_mtime)
             stream_file(src)
+            last_played = src
+
+            try:
+                files, playlist_mtime = load_playlist()
+            except FileNotFoundError as exc:
+                print(exc, flush=True)
+                time.sleep(5)
+                break
+
+            if not files:
+                print("Playlist empty after update, waiting...", flush=True)
+                time.sleep(10)
+                break
+
+            try:
+                next_index = files.index(last_played) + 1
+            except ValueError:
+                next_index = 0
 
 
 if __name__ == "__main__":

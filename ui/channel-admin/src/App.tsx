@@ -11,6 +11,7 @@ import ChannelSelector from "./components/ChannelSelector";
 import ChannelSettingsForm from "./components/ChannelSettingsForm";
 import ShowDiscovery from "./components/ShowDiscovery";
 import ShowTable from "./components/ShowTable";
+import PlaylistManager from "./components/PlaylistManager";
 import SaveBar from "./components/SaveBar";
 
 function cloneChannel(channel: ChannelConfig | null): ChannelConfig | null {
@@ -27,6 +28,7 @@ function App() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [activeView, setActiveView] = useState<"settings" | "playlist">("settings");
 
   useEffect(() => {
     fetchChannels()
@@ -176,11 +178,25 @@ function App() {
           onSelect={setSelectedId}
           disabled={loading}
         />
+        <div className="view-switch">
+          <button
+            className={`tab-button ${activeView === "settings" ? "active" : ""}`}
+            onClick={() => setActiveView("settings")}
+          >
+            Channel Settings
+          </button>
+          <button
+            className={`tab-button ${activeView === "playlist" ? "active" : ""}`}
+            onClick={() => setActiveView("playlist")}
+          >
+            Playlist Management
+          </button>
+        </div>
       </header>
       <main className="app-content">
         {error && <div className="card" style={{ color: "#dc2626" }}>{error}</div>}
         {!error && loading && <div className="card">Loading channel…</div>}
-        {!loading && currentChannel && (
+        {!loading && currentChannel && activeView === "settings" && (
           <>
             <ChannelSettingsForm
               channel={currentChannel}
@@ -199,6 +215,12 @@ function App() {
               onBulkAction={handleBulkAction}
             />
           </>
+        )}
+        {!loading && currentChannel && activeView === "playlist" && (
+          <PlaylistManager channelId={currentChannel.id} active={activeView === "playlist"} />
+        )}
+        {!loading && !currentChannel && (
+          <div className="card">Select a channel to manage its settings.</div>
         )}
       </main>
       <SaveBar

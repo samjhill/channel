@@ -21,8 +21,9 @@ from scripts.bumpers.render_sassy_card import (
     render_sassy_card,
 )
 from server.api.settings_service import load_settings
+from server.playlist_service import resolve_playlist_path
 
-PLAYLIST_FILE = "/app/hls/playlist.txt"
+PLAYLIST_FILE = str(resolve_playlist_path())
 DEFAULT_ASSETS_ROOT = "/app/assets"
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov")
 SEASON_PATTERN = re.compile(r"(?:season|series)\s*\d+", re.IGNORECASE)
@@ -103,8 +104,86 @@ def parse_include_overrides() -> set[str]:
 
 
 ENV_INCLUDE_FILTER = parse_include_overrides()
-SASSY_CONFIG: Optional[Dict[str, Any]] = None
-SASSY_DECK: List[str] = []
+
+
+class SassyCardManager:
+    """
+    Handles config loading, bumper generation, and deck shuffling for sassy cards.
+    """
+
+    def __init__(self) -> None:
+        self._config: Optional[Dict[str, Any]] = None
+        self._cards: Optional[List[str]] = None
+        self._deck: List[str] = []
+        self._logo_path: Optional[str] = None
+
+    def config(self) -> Dict[str, Any]:
+        if self._config is None:
+            self._config = load_sassy_card_config()
+        return self._config
+
+    def enabled(self) -> bool:
+        return bool(self.config().get("enabled", False))
+
+    def probability(self) -> float:
+        try:
+            return max(0.0, float(self.config().get("probability_between_episodes", 0.0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    def _resolve_logo_path(self) -> Optional[str]:
+        if self._logo_path is None:
+            candidate = os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png")
+            self._logo_path = candidate if os.path.isfile(candidate) else None
+        return self._logo_path
+
+    def _ensure_cards(self) -> List[str]:
+        if self._cards is not None:
+            return self._cards
+
+        os.makedirs(SASSY_BUMPERS_DIR, exist_ok=True)
+        cfg = self.config()
+        logo_path = self._resolve_logo_path()
+        cards: List[str] = []
+
+        for idx, message in enumerate(cfg.get("messages", []), start=1):
+            slug = safe_filename(message) or f"card_{idx}"
+            destination = os.path.join(SASSY_BUMPERS_DIR, f"sassy_{slug}.mp4")
+            if not os.path.exists(destination):
+                try:
+                    render_sassy_card(
+                        output_path=destination,
+                        logo_path=logo_path,
+                        message=message,
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    print(f"[Sassy] Failed to render card for '{message[:30]}': {exc}")
+            if os.path.exists(destination):
+                cards.append(destination)
+
+        self._cards = cards
+        return cards
+
+    def draw_card(self) -> Optional[str]:
+        if not self.enabled():
+            return None
+
+        probability = self.probability()
+        if probability <= 0 or random.random() > probability:
+            return None
+
+        cards = self._ensure_cards()
+        if not cards:
+            return None
+
+        if not self._deck:
+            self._deck = cards[:]
+            random.shuffle(self._deck)
+
+        return self._deck.pop()
+
+
+SASSY_CARDS = SassyCardManager()
 
 
 def resolve_channel(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -172,18 +251,38 @@ def order_episodes(episodes: List[str], mode: str) -> List[str]:
 
 
 def build_sequential_playlist(entries: Sequence[Dict[str, Any]]) -> List[str]:
+    """
+    Build a playlist that round-robins between shows so viewers see variety
+    even in sequential mode.
+    """
+
+    queues = [
+        {"config": entry["config"], "episodes": list(entry["episodes"])}
+        for entry in entries
+        if entry["episodes"]
+    ]
+
     playlist: List[str] = []
-    total_episodes = sum(len(entry["episodes"]) for entry in entries)
+    total_episodes = sum(len(queue["episodes"]) for queue in queues)
     processed = 0
-    for entry in entries:
-        show_label = entry["config"].get("label") or infer_show_title_from_path(
-            entry["episodes"][0]
-        )
-        for episode in entry["episodes"]:
+
+    if not queues:
+        return playlist
+
+    while any(queue["episodes"] for queue in queues):
+        for queue in queues:
+            if not queue["episodes"]:
+                continue
+
+            episode = queue["episodes"].pop(0)
+            show_label = queue["config"].get("label") or infer_show_title_from_path(
+                episode
+            )
             processed += 1
             append_episode_with_bumper(playlist, show_label, episode)
             if processed < total_episodes:
                 maybe_append_sassy_card(playlist)
+
     return playlist
 
 
@@ -224,66 +323,8 @@ def append_episode_with_bumper(playlist: List[str], show_label: str, episode: st
     playlist.append(episode)
 
 
-def get_sassy_config() -> Dict[str, Any]:
-    global SASSY_CONFIG
-    if SASSY_CONFIG is None:
-        SASSY_CONFIG = load_sassy_card_config()
-    return SASSY_CONFIG
-
-
-def ensure_sassy_cards(cfg: Dict[str, Any]) -> List[str]:
-    os.makedirs(SASSY_BUMPERS_DIR, exist_ok=True)
-    logo_candidate = os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png")
-    logo_arg = logo_candidate if os.path.isfile(logo_candidate) else None
-
-    cards: List[str] = []
-    for idx, msg in enumerate(cfg.get("messages", []), start=1):
-        slug = safe_filename(msg) or f"card_{idx}"
-        destination = os.path.join(SASSY_BUMPERS_DIR, f"sassy_{slug}.mp4")
-        if not os.path.exists(destination):
-            try:
-                render_sassy_card(
-                    output_path=destination,
-                    logo_path=logo_arg,
-                    message=msg,
-                )
-            except Exception as exc:  # pragma: no cover
-                print(f"[Sassy] Failed to render card for '{msg[:30]}': {exc}")
-        if os.path.exists(destination):
-            cards.append(destination)
-    return cards
-
-
-def draw_sassy_card_from_deck(cfg: Dict[str, Any]) -> Optional[str]:
-    global SASSY_DECK
-    if not SASSY_DECK:
-        cards = ensure_sassy_cards(cfg)
-        if not cards:
-            return None
-        SASSY_DECK = cards[:]
-        random.shuffle(SASSY_DECK)
-    return SASSY_DECK.pop() if SASSY_DECK else None
-
-
-def maybe_generate_sassy_card() -> str | None:
-    cfg = get_sassy_config()
-    if not cfg.get("enabled", False):
-        return None
-
-    try:
-        probability = float(cfg.get("probability_between_episodes", 0.0))
-    except (TypeError, ValueError):
-        probability = 0.0
-
-    if probability <= 0 or random.random() > probability:
-        return None
-
-    card = draw_sassy_card_from_deck(cfg)
-    return card
-
-
 def maybe_append_sassy_card(playlist: List[str]) -> None:
-    card = maybe_generate_sassy_card()
+    card = SASSY_CARDS.draw_card()
     if card:
         playlist.append(card)
 

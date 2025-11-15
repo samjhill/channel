@@ -14,7 +14,9 @@ dist/
 # Logs
 *.log
 
-.venv/
-.DS_Store
+# Runtime artifacts
+server/hls/
 
-
+# Media assets (do not commit large binary files)
+assets/bumpers/
+assets/music/

@@ -23,6 +23,36 @@ export interface ChannelConfig {
   [key: string]: unknown;
 }
 
+export interface PlaylistItem {
+  path: string;
+  label: string;
+  detail: string;
+  relative_path: string;
+  filename: string;
+  type: string;
+  controllable: boolean;
+  position: number;
+}
+
+export interface PlaylistSnapshot {
+  channel_id: string;
+  version: number;
+  fetched_at: number;
+  current: PlaylistItem | null;
+  upcoming: PlaylistItem[];
+  total_entries: number;
+  total_segments: number;
+  controllable_remaining: number;
+  limit: number;
+  state?: Record<string, unknown> | null;
+}
+
+export interface PlaylistUpdatePayload {
+  version: number;
+  desired: string[];
+  skipped: string[];
+}
+
 const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 
 async function handleResponse<T>(res: Response): Promise<T> {
@@ -63,5 +93,31 @@ export async function discoverShows(
     `${API_BASE}/api/channels/${encodeURIComponent(id)}/shows/discover${params}`
   );
   return handleResponse<ShowConfig[]>(res);
+}
+
+export async function fetchPlaylistSnapshot(
+  channelId: string,
+  limit = 25
+): Promise<PlaylistSnapshot> {
+  const res = await fetch(
+    `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/playlist/next?limit=${limit}`
+  );
+  return handleResponse<PlaylistSnapshot>(res);
+}
+
+export async function updateUpcomingPlaylist(
+  channelId: string,
+  payload: PlaylistUpdatePayload,
+  limit = 25
+): Promise<PlaylistSnapshot> {
+  const res = await fetch(
+    `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/playlist/next?limit=${limit}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    }
+  );
+  return handleResponse<PlaylistSnapshot>(res);
 }
 
