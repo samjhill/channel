@@ -29,7 +29,6 @@ PLAYLIST_FILE = str(resolve_playlist_path())
 DEFAULT_ASSETS_ROOT = "/app/assets"
 DEFAULT_PLAYLIST_EPISODE_LIMIT = 500
 DEFAULT_PLAYLIST_SEED_LIMIT = 50
-DEFAULT_PLAYLIST_EPISODE_LIMIT = 500
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov")
 SEASON_PATTERN = re.compile(r"(?:season|series)\s*\d+", re.IGNORECASE)
 EPISODE_PATTERN = re.compile(r"S\d{1,2}E\d{1,2}.*$", re.IGNORECASE)
@@ -145,10 +144,47 @@ def format_episode_label(metadata: Optional[Dict[str, Optional[int]]]) -> Option
     return human_label or code
 
 
+def find_existing_bumper(
+    show_title: str, episode_metadata: Optional[Dict[str, Optional[int]]] = None
+) -> Optional[str]:
+    """
+    Check if a bumper already exists for the given show/episode.
+    Returns the path to the bumper if found, None otherwise.
+    Does not create new bumpers.
+    """
+    base_name = safe_filename(show_title)
+    episode_code = format_episode_code(episode_metadata)
+    
+    # Check for specific bumper first
+    if episode_code:
+        specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
+        specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
+        if os.path.exists(specific_bumper_path):
+            return specific_bumper_path
+    
+    # Fall back to generic bumper
+    generic_filename = f"{base_name}.mp4"
+    generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
+    if os.path.exists(generic_bumper_path):
+        return generic_bumper_path
+    
+    return None
+
+
 def ensure_bumper(
     show_title: str, episode_metadata: Optional[Dict[str, Optional[int]]] = None
 ) -> str:
+    """
+    Ensure a bumper exists for the given show/episode.
+    Returns the path to an existing bumper, or creates and returns a new one.
+    """
     os.makedirs(BUMPERS_DIR, exist_ok=True)
+    
+    # Check if bumper already exists
+    existing = find_existing_bumper(show_title, episode_metadata)
+    if existing:
+        return existing
+    
     base_name = safe_filename(show_title)
     
     # First, ensure generic bumper exists (without episode info)
@@ -609,26 +645,16 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
 
 
 def write_episode_entry(handle, slot: EpisodeSlot, require_bumper: bool) -> None:
+    """
+    Write an episode entry to the playlist, optionally with a bumper.
+    Always checks for existing bumpers, but only creates new ones if require_bumper=True.
+    """
     bumper_path: Optional[str] = None
     metadata = extract_episode_metadata(slot.episode_path)
-    # Always check for existing bumpers, but only render new ones if require_bumper=True
+    
+    # Always check for existing bumpers
     try:
-        base_name = safe_filename(slot.show_label)
-        episode_code = format_episode_code(metadata)
-        
-        # Check for specific bumper first
-        if episode_code:
-            specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
-            specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
-            if os.path.exists(specific_bumper_path):
-                bumper_path = specific_bumper_path
-        
-        # Fall back to generic bumper
-        if not bumper_path:
-            generic_filename = f"{base_name}.mp4"
-            generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
-            if os.path.exists(generic_bumper_path):
-                bumper_path = generic_bumper_path
+        bumper_path = find_existing_bumper(slot.show_label, metadata)
         
         # If no existing bumper found and require_bumper=True, try to create one
         if not bumper_path and require_bumper:

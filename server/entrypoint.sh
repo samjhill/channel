@@ -13,4 +13,3 @@ python3 /app/stream.py &
 
 # Keep the script alive
 wait
-
