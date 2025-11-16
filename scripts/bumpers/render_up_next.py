@@ -6,6 +6,7 @@ import math
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from typing import Iterable, Optional
@@ -14,6 +15,12 @@ import secrets
 
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFont
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.bumpers.ffmpeg_utils import run_ffmpeg, validate_video_file, validate_frame_sequence
 
 # Brand palette
 STEEL_BLUE = "#475D92"
@@ -273,8 +280,26 @@ def render_up_next_bumper(
     pattern_amp = rng.uniform(0.25, 0.45)
 
     num_frames = int(duration_sec * fps)
+    if num_frames == 0:
+        raise RuntimeError(f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})")
 
-    base_logo = Image.open(logo_path).convert("RGBA")
+    try:
+        base_logo = Image.open(logo_path).convert("RGBA")
+        # Validate logo is not empty
+        if base_logo.size[0] == 0 or base_logo.size[1] == 0:
+            raise RuntimeError(f"Logo image has zero dimensions: {logo_path}")
+        # Check if logo has any visible content (not completely transparent)
+        # For RGBA images, check if alpha channel has any non-zero values
+        if base_logo.mode == "RGBA":
+            alpha_extrema = base_logo.getextrema()[3]
+            if alpha_extrema == (0, 0):  # Alpha channel is all 0
+                raise RuntimeError(f"Logo image is completely transparent: {logo_path}")
+        # Check if RGB channels have any non-zero content (in case of RGB image)
+        rgb_extrema = base_logo.getextrema()[:3]
+        if all(ext == (0, 0) for ext in rgb_extrema):
+            raise RuntimeError(f"Logo image appears to be all black: {logo_path}")
+    except Exception as e:
+        raise RuntimeError(f"Failed to load logo from {logo_path}: {e}") from e
     base_logo_width = 200
     scale = base_logo_width / base_logo.width
     base_logo = base_logo.resize(
@@ -311,6 +336,7 @@ def render_up_next_bumper(
     fade_out_anim = AnimationWindow(start=duration_sec - 0.6, duration=0.6)
 
     with tempfile.TemporaryDirectory() as tmpdir:
+        frames_generated = 0
         for idx in range(num_frames):
             t = idx / fps
 
@@ -431,6 +457,23 @@ def render_up_next_bumper(
 
             frame_path = os.path.join(tmpdir, f"frame_{idx:04d}.png")
             frame.convert("RGB").save(frame_path, "PNG")
+            frames_generated += 1
+            
+            # Validate frame is not all black (unless it's during fade out)
+            if t < fade_out_anim.start:
+                extrema = frame.getextrema()
+                if extrema == ((0, 0), (0, 0), (0, 0)):
+                    raise RuntimeError(f"Frame {idx} is all black (time={t:.2f}s)")
+
+        # Validate all frames were generated
+        if frames_generated != num_frames:
+            raise RuntimeError(
+                f"Only generated {frames_generated} frames out of {num_frames} expected"
+            )
+        
+        # Validate frame sequence
+        if not validate_frame_sequence(Path(tmpdir), num_frames, "frame_%04d.png"):
+            raise RuntimeError("Frame sequence validation failed")
 
         ffmpeg_cmd = [
             "ffmpeg",
@@ -449,7 +492,15 @@ def render_up_next_bumper(
             "yuv420p",
             output_path,
         ]
-        subprocess.run(ffmpeg_cmd, check=True)
+        run_ffmpeg(
+            ffmpeg_cmd,
+            timeout=300.0,
+            description=f"Rendering up next video ({duration_sec}s, {num_frames} frames)",
+        )
+        
+        # Validate the generated video
+        if not validate_video_file(Path(output_path), min_duration_sec=duration_sec * 0.9):
+            raise RuntimeError(f"Generated video failed validation: {output_path}")
 
 
 __all__ = ["render_up_next_bumper"]

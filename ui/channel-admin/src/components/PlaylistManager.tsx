@@ -14,6 +14,16 @@ interface PlaylistManagerProps {
 
 const WINDOW_SIZE = 25;
 
+function formatEpisodeTitle(title: string): string {
+  // Remove file extensions
+  const withoutExt = title.replace(/\.(mkv|mp4|avi|mov|m4v|webm|flv|wmv)$/i, "");
+  // Replace common separators with spaces
+  return withoutExt
+    .replace(/[-_\.]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
   const [snapshot, setSnapshot] = useState<PlaylistSnapshot | null>(null);
   const [draft, setDraft] = useState<PlaylistItem[]>([]);
@@ -151,6 +161,9 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
       const message =
         err instanceof Error ? err.message : "Failed to skip episode";
       setError(message);
+      console.error("Skip episode error:", err);
+      // Keep error visible for longer so user can see it
+      setTimeout(() => setError(null), 10000);
     } finally {
       setSkipping(false);
     }
@@ -208,18 +221,18 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
             <div className="playlist-now-header">
               <h3>Now Playing</h3>
               <button
-                className="btn btn-secondary"
+                className="btn btn-primary"
                 onClick={handleSkipCurrent}
                 disabled={skipping || loading || saving || !snapshot || !snapshot.current}
               >
-                {skipping ? "Skipping…" : "Skip to End"}
+                {skipping ? "Skipping…" : "Skip Current Episode"}
               </button>
             </div>
             {!snapshot && loading && <p>Loading current item…</p>}
             {snapshot && snapshot.current ? (
               <div>
-                <div className="playlist-row-title">{snapshot.current.label}</div>
-                <div className="playlist-row-detail">{snapshot.current.detail}</div>
+                <div className="playlist-row-title">{formatEpisodeTitle(snapshot.current.detail)}</div>
+                <div className="playlist-row-detail">{snapshot.current.label}</div>
               </div>
             ) : (
               <p>No active segment detected.</p>
@@ -241,8 +254,8 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
                     <div className="playlist-row-info">
                       <span className="playlist-row-index">{index + 1}</span>
                       <div>
-                        <div className="playlist-row-title">{item.label}</div>
-                        <div className="playlist-row-detail">{item.detail}</div>
+                        <div className="playlist-row-title">{formatEpisodeTitle(item.detail)}</div>
+                        <div className="playlist-row-detail">{item.label}</div>
                       </div>
                     </div>
                     <div className="playlist-row-controls">

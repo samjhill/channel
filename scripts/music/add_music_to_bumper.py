@@ -8,8 +8,15 @@ import os
 import random
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 from typing import Iterable, Sequence
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from scripts.bumpers.ffmpeg_utils import run_ffmpeg
 
 DEFAULT_MUSIC_DIR = "/app/assets/music"
 SUPPORTED_AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac"}
@@ -113,7 +120,11 @@ def add_random_music_to_bumper(
         str(output),
     ]
     try:
-        subprocess.run(cmd, check=True)
+        run_ffmpeg(
+            cmd,
+            timeout=120.0,
+            description=f"Adding music to bumper (track: {track.name})",
+        )
     finally:
         # Clean up the temporary silent video if it is still around.
         if video.exists():

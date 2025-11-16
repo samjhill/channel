@@ -59,6 +59,41 @@
         hls.on(Hls.Events.MANIFEST_PARSED, function () {
           video.play().catch(() => {});
         });
+        
+        // Handle manifest updates (e.g., when skipping episodes)
+        hls.on(Hls.Events.LEVEL_UPDATED, function () {
+          // Manifest was updated, ensure playback continues
+          if (video.paused && video.readyState >= video.HAVE_FUTURE_DATA) {
+            video.play().catch(() => {});
+          }
+        });
+        
+        // Handle stream discontinuities (when skipping episodes)
+        // When FFmpeg restarts with a new file, the manifest changes
+        // Force a reload to pick up the new segments
+        let lastSegmentCount = 0;
+        const checkManifestUpdates = setInterval(() => {
+          try {
+            const levels = hls.levels;
+            if (levels && levels.length > 0) {
+              const currentLevel = hls.currentLevel;
+              if (currentLevel >= 0 && levels[currentLevel]) {
+                const segments = levels[currentLevel].details?.fragments;
+                if (segments && segments.length !== lastSegmentCount) {
+                  lastSegmentCount = segments.length;
+                  // Manifest updated - ensure playback continues
+                  if (video.paused && video.readyState >= video.HAVE_FUTURE_DATA) {
+                    console.log('Manifest updated, resuming playback...');
+                    video.play().catch(() => {});
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore errors during manifest check
+          }
+        }, 1000);
+        
         hls.on(Hls.Events.ERROR, function (event, data) {
           console.error('HLS error', event, data);
           if (data.fatal) {

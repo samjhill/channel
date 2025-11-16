@@ -125,8 +125,15 @@ def write_playlist_entries(entries: Sequence[str]) -> float:
     return mtime
 
 
-def load_playhead_state() -> Dict[str, Any]:
-    """Load playhead state with mtime-based caching."""
+def load_playhead_state(force_reload: bool = False) -> Dict[str, Any]:
+    """Load playhead state with mtime-based caching.
+    
+    Note: Cache is checked every call, so frequent calls will still see updates.
+    For real-time skip detection, the streamer should call this frequently.
+    
+    Args:
+        force_reload: If True, bypass cache and reload from file immediately.
+    """
     global _playhead_cache, _playhead_mtime
     
     playhead_path = resolve_playhead_path()
@@ -141,20 +148,19 @@ def load_playhead_state() -> Dict[str, Any]:
     except (FileNotFoundError, OSError):
         current_mtime = 0.0
     
-    # Return cached version if file hasn't changed
-    if _playhead_cache is not None and abs(current_mtime - _playhead_mtime) < 0.001:
-        return _playhead_cache
-    
-    # Load from file
-    with playhead_path.open("r", encoding="utf-8") as fh:
-        try:
-            state = json.load(fh)
-        except json.JSONDecodeError:
-            state = {}
-    
-    # Update cache
-    _playhead_cache = state
-    _playhead_mtime = current_mtime
+    # Force reload if requested, or if file has changed
+    # Use a very small threshold (0.01s) to detect changes quickly
+    if force_reload or _playhead_cache is None or abs(current_mtime - _playhead_mtime) > 0.01:
+        # Load from file
+        with playhead_path.open("r", encoding="utf-8") as fh:
+            try:
+                state = json.load(fh)
+            except json.JSONDecodeError:
+                state = {}
+        
+        # Update cache
+        _playhead_cache = state
+        _playhead_mtime = current_mtime
     
     return _playhead_cache
 
@@ -166,12 +172,25 @@ def save_playhead_state(state: Dict[str, Any]) -> None:
     playhead_path = resolve_playhead_path()
     playhead_path.parent.mkdir(parents=True, exist_ok=True)
     state["updated_at"] = time.time()
+    
+    # Write to temp file first, then replace (atomic write)
     with tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", dir=str(playhead_path.parent), delete=False
     ) as tmp:
         json.dump(state, tmp, indent=2)
         tmp_path = Path(tmp.name)
+    
+    # Atomic replace
     tmp_path.replace(playhead_path)
+    
+    # Force filesystem sync to ensure the write is visible immediately
+    # This is important for Docker volume mounts
+    try:
+        import os
+        os.fsync(playhead_path.fileno() if hasattr(playhead_path, 'fileno') else playhead_path.open('r').fileno())
+    except (AttributeError, OSError):
+        # Fallback: just ensure the file is written
+        pass
     
     # Update cache after write
     try:
@@ -257,17 +276,40 @@ def build_playlist_segments(entries: Sequence[str]) -> List[Dict[str, Any]]:
     return segments
 
 
+def _normalize_path(path: str) -> str:
+    """Normalize path for comparison, handling container vs host path differences.
+    
+    Normalizes both container paths (/media/tvchannel/...) and host paths 
+    (/Volumes/media/tv/...) to a canonical form for comparison.
+    """
+    if not path:
+        return path
+    # Convert container paths to host paths for comparison
+    # /media/tvchannel/... -> /Volumes/media/tv/...
+    if path.startswith("/media/tvchannel/"):
+        return path.replace("/media/tvchannel/", "/Volumes/media/tv/", 1)
+    # Keep host paths as-is (they're already in canonical form)
+    return path
+
+
 def find_segment_index_for_entry(segments: Sequence[Dict[str, Any]], entry_path: str) -> int:
     """Find segment index for an entry path, optimized with early exit."""
+    # Normalize the entry path for comparison
+    normalized_entry = _normalize_path(entry_path)
+    
     # Use a set for O(1) lookup within entries
     for idx, segment in enumerate(segments):
         entries = segment.get("entries", [])
-        # Check episode_path first (most common case)
-        if segment.get("episode_path") == entry_path:
+        episode_path = segment.get("episode_path")
+        
+        # Check episode_path first (most common case) - normalize both for comparison
+        if episode_path and _normalize_path(episode_path) == normalized_entry:
             return idx
-        # Then check entries list
-        if entry_path in entries:
-            return idx
+        
+        # Then check entries list - normalize each entry for comparison
+        for entry in entries:
+            if _normalize_path(entry) == normalized_entry:
+                return idx
     return -1
 
 

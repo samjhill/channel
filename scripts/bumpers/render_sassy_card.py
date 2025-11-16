@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 from PIL import Image, ImageDraw, ImageFont
 
 from scripts.music.add_music_to_bumper import add_random_music_to_bumper
+from scripts.bumpers.ffmpeg_utils import run_ffmpeg, validate_video_file
 
 DEFAULT_SASSY_CONFIG = "/app/config/sassy_messages.json"
 DEFAULT_ASSETS_ROOT = "/app/assets"
@@ -318,16 +319,19 @@ def _paste_logo(
     margin: int = 36,
 ) -> None:
     if not logo_path.exists():
+        print(f"[Warning] Logo file not found: {logo_path}", file=sys.stderr)
         return
     try:
         with Image.open(logo_path).convert("RGBA") as logo:
             w, h = logo.size
             if h == 0:
+                print(f"[Warning] Logo has zero height: {logo_path}", file=sys.stderr)
                 return
             scale = target_height / h
             resized = logo.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
             img.paste(resized, (img.width - resized.width - margin, margin), resized)
-    except OSError:
+    except OSError as e:
+        print(f"[Warning] Failed to load logo {logo_path}: {e}", file=sys.stderr)
         return
 
 
@@ -380,6 +384,12 @@ def render_sassy_card(
 
         img = Image.new("RGB", (width, height))
         _draw_background(img, style)
+        
+        # Validate that background was drawn (not all black unless style specifies black)
+        # This is a basic check - if the image is completely black and style doesn't specify black, something went wrong
+        if img.getextrema() == ((0, 0), (0, 0), (0, 0)):
+            if style.bg_color_top != (0, 0, 0) or style.bg_color_bottom != (0, 0, 0):
+                raise RuntimeError("Background drawing resulted in all-black image, but style doesn't specify black")
 
         draw = ImageDraw.Draw(img)
         max_text_width = int(width * style.max_text_width_ratio)
@@ -430,19 +440,33 @@ def render_sassy_card(
             "yuv420p",
             str(silent_tmp),
         ]
-        subprocess.run(video_cmd, check=True)
+        run_ffmpeg(
+            video_cmd,
+            timeout=60.0,
+            description=f"Rendering sassy card video ({duration_sec}s)",
+        )
+        
+        # Validate the generated video
+        if not validate_video_file(silent_tmp, min_duration_sec=duration_sec * 0.9):
+            raise RuntimeError(f"Generated video failed validation: {silent_tmp}")
 
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if not style.add_music:
             shutil.move(str(silent_tmp), str(output_path))
+            # Final validation
+            if not validate_video_file(output_path, min_duration_sec=duration_sec * 0.9):
+                raise RuntimeError(f"Final video failed validation: {output_path}")
         else:
             add_random_music_to_bumper(
                 bumper_video_path=str(silent_tmp),
                 output_path=str(output_path),
                 music_volume=cfg.get("music_volume", 0.2),
             )
+            # Final validation after music is added
+            if not validate_video_file(output_path, min_duration_sec=duration_sec * 0.9):
+                raise RuntimeError(f"Final video with music failed validation: {output_path}")
 
 
 if __name__ == "__main__":

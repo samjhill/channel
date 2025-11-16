@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.music.add_music_to_bumper import add_random_music_to_bumper
+from scripts.bumpers.ffmpeg_utils import run_ffmpeg, validate_video_file, validate_frame_sequence
 
 # Brand palette
 STEEL_BLUE = "#475D92"
@@ -219,9 +220,27 @@ def render_network_brand_bumper(
         if not logo_png or not logo_png.exists():
             raise RuntimeError(f"Could not convert or find logo at {logo_svg_path}")
 
-        base_logo = Image.open(logo_png).convert("RGBA")
+        try:
+            base_logo = Image.open(logo_png).convert("RGBA")
+            # Validate logo is not empty
+            if base_logo.size[0] == 0 or base_logo.size[1] == 0:
+                raise RuntimeError(f"Logo image has zero dimensions: {logo_png}")
+            # Check if logo has any visible content (not completely transparent)
+            # For RGBA images, check if alpha channel has any non-zero values
+            if base_logo.mode == "RGBA":
+                alpha_extrema = base_logo.getextrema()[3]
+                if alpha_extrema == (0, 0):  # Alpha channel is all 0
+                    raise RuntimeError(f"Logo image is completely transparent: {logo_png}")
+            # Check if RGB channels have any non-zero content (in case of RGB image)
+            rgb_extrema = base_logo.getextrema()[:3]
+            if all(ext == (0, 0) for ext in rgb_extrema):
+                raise RuntimeError(f"Logo image appears to be all black: {logo_png}")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load logo from {logo_png}: {e}") from e
 
         num_frames = int(duration_sec * fps)
+        if num_frames == 0:
+            raise RuntimeError(f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})")
 
         # Animation parameters
         logo_start = 0.2
@@ -231,6 +250,7 @@ def render_network_brand_bumper(
         fade_out_duration = 1.5
 
         # Generate frames
+        frames_generated = 0
         for idx in range(num_frames):
             t = idx / fps
 
@@ -272,6 +292,23 @@ def render_network_brand_bumper(
 
             frame_path = Path(tmpdir) / f"frame_{idx:04d}.png"
             frame.convert("RGB").save(frame_path, "PNG")
+            frames_generated += 1
+            
+            # Validate frame is not all black (unless it's during fade out)
+            if t < fade_out_start:
+                extrema = frame.getextrema()
+                if extrema == ((0, 0), (0, 0), (0, 0)):
+                    raise RuntimeError(f"Frame {idx} is all black (time={t:.2f}s)")
+
+        # Validate all frames were generated
+        if frames_generated != num_frames:
+            raise RuntimeError(
+                f"Only generated {frames_generated} frames out of {num_frames} expected"
+            )
+        
+        # Validate frame sequence
+        if not validate_frame_sequence(Path(tmpdir), num_frames, "frame_%04d.png"):
+            raise RuntimeError("Frame sequence validation failed")
 
         # Render video
         silent_video = Path(tmpdir) / "silent_bumper.mp4"
@@ -292,7 +329,15 @@ def render_network_brand_bumper(
             "yuv420p",
             str(silent_video),
         ]
-        subprocess.run(ffmpeg_cmd, check=True)
+        run_ffmpeg(
+            ffmpeg_cmd,
+            timeout=300.0,
+            description=f"Rendering network brand video ({duration_sec}s, {num_frames} frames)",
+        )
+        
+        # Validate the generated video
+        if not validate_video_file(silent_video, min_duration_sec=duration_sec * 0.9):
+            raise RuntimeError(f"Generated video failed validation: {silent_video}")
 
         # Add music
         add_random_music_to_bumper(
@@ -300,6 +345,10 @@ def render_network_brand_bumper(
             output_path,
             music_volume=music_volume,
         )
+        
+        # Final validation after music is added
+        if not validate_video_file(Path(output_path), min_duration_sec=duration_sec * 0.9):
+            raise RuntimeError(f"Final video with music failed validation: {output_path}")
 
 
 __all__ = ["render_network_brand_bumper"]
