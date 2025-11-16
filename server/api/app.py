@@ -99,7 +99,13 @@ def update_channel(channel_id: str, updated: Dict[str, Any]) -> Dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    restart_media_server()
+    # Attempt to restart the media server to apply changes
+    restart_success = restart_media_server()
+    if not restart_success:
+        # Log warning but don't fail the request - settings are saved
+        import logging
+        logging.warning("Channel settings saved but server restart/playlist regeneration failed")
+    
     return saved
 
 

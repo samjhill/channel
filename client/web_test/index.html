@@ -59,14 +59,19 @@
         let lastSegmentCount = 0;
         let lastManifestCheck = Date.now();
         let lastSegmentEndTime = 0;
+        let lastSegmentStartTime = 0;
         let discontinuityDetected = false;
+        let lastManifestUrl = '';
+        let manifestReloadCount = 0;
         
         hls.on(Hls.Events.MANIFEST_PARSED, function () {
           console.log('Manifest parsed, starting playback');
           video.play().catch(() => {});
           lastSegmentCount = 0;
           lastSegmentEndTime = 0;
+          lastSegmentStartTime = 0;
           discontinuityDetected = false;
+          manifestReloadCount++;
         });
         
         // Handle manifest updates (e.g., when skipping episodes)
@@ -81,20 +86,36 @@
               if (level && level.details) {
                 const fragments = level.details.fragments;
                 if (fragments && fragments.length > 0) {
-                  // Get the last fragment's end time
+                  // Get the first and last fragment times
+                  const firstFragment = fragments[0];
                   const lastFragment = fragments[fragments.length - 1];
+                  const newStartTime = firstFragment.start;
                   const newEndTime = lastFragment.start + lastFragment.duration;
+                  
+                  // CRITICAL: If the first segment start time reset to near 0, FFmpeg restarted
+                  // This is the most reliable indicator of a skip/restart
+                  if (lastSegmentStartTime > 30 && newStartTime < 10) {
+                    console.log('⚠️ FFmpeg restart detected (segment start time reset) - forcing seek to live edge');
+                    discontinuityDetected = true;
+                    // Force seek to live edge immediately
+                    const seekTime = Math.max(0, newEndTime - 6);
+                    video.currentTime = seekTime;
+                    // Also force a reload to ensure we get fresh segments
+                    setTimeout(() => {
+                      hls.startLoad();
+                    }, 500);
+                  }
                   
                   // If the end time decreased significantly, we likely have a discontinuity
                   if (lastSegmentEndTime > 0 && newEndTime < lastSegmentEndTime - 10) {
-                    console.log('Discontinuity detected - seeking to live edge');
+                    console.log('⚠️ Discontinuity detected (end time decreased) - seeking to live edge');
                     discontinuityDetected = true;
-                    // Seek to live edge (slightly before the end to ensure we have buffer)
                     const seekTime = Math.max(0, newEndTime - 6);
                     video.currentTime = seekTime;
                   }
                   
                   lastSegmentEndTime = newEndTime;
+                  lastSegmentStartTime = newStartTime;
                   
                   // If segment count changed, manifest was updated
                   if (fragments.length !== lastSegmentCount) {
@@ -102,9 +123,10 @@
                     lastSegmentCount = fragments.length;
                     console.log(`Manifest updated: ${oldCount} -> ${fragments.length} segments`);
                     
-                    // If we detected a discontinuity OR if segments increased significantly, seek to live edge
-                    if (discontinuityDetected || (oldCount > 0 && fragments.length > oldCount + 5)) {
-                      console.log('Seeking to live edge after manifest update');
+                    // If we detected a discontinuity OR if segments reset (count decreased significantly), seek to live edge
+                    const segmentCountDecreased = oldCount > 10 && fragments.length < oldCount - 5;
+                    if (discontinuityDetected || segmentCountDecreased || (oldCount > 0 && fragments.length > oldCount + 5)) {
+                      console.log('⚠️ Seeking to live edge after manifest update');
                       const seekTime = Math.max(0, newEndTime - 6);
                       video.currentTime = seekTime;
                       discontinuityDetected = false;
@@ -146,29 +168,51 @@
                 const fragments = level.details.fragments;
                 
                 if (fragments && fragments.length > 0) {
+                  const firstFragment = fragments[0];
                   const lastFragment = fragments[fragments.length - 1];
+                  const currentStartTime = firstFragment.start;
                   const currentEndTime = lastFragment.start + lastFragment.duration;
                   
                   // Check if segments stopped updating (indicates FFmpeg restart)
-                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 3000) {
-                    // Segments haven't changed in 3+ seconds - might be a restart
-                    // Force a manifest reload
-                    console.log('No segment updates detected, reloading manifest...');
+                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 2000) {
+                    // Segments haven't changed in 2+ seconds - might be a restart
+                    // Force a manifest reload more aggressively
+                    console.log('⚠️ No segment updates detected, forcing manifest reload...');
                     hls.startLoad();
                     lastManifestCheck = now;
                   } else if (fragments.length !== lastSegmentCount) {
                     lastManifestCheck = now;
+                    const oldCount = lastSegmentCount;
                     lastSegmentCount = fragments.length;
                     
-                    // Check for discontinuity (end time decreased)
-                    if (lastSegmentEndTime > 0 && currentEndTime < lastSegmentEndTime - 5) {
-                      console.log('Discontinuity detected in polling - seeking to live edge');
+                    // Check if segment start time reset (most reliable indicator of restart)
+                    if (lastSegmentStartTime > 30 && currentStartTime < 10) {
+                      console.log('⚠️ Segment start time reset detected in polling - FFmpeg restarted!');
+                      const seekTime = Math.max(0, currentEndTime - 6);
+                      video.currentTime = seekTime;
+                      video.play().catch(() => {});
+                      discontinuityDetected = true;
+                    }
+                    
+                    // Check for discontinuity (end time decreased significantly)
+                    if (lastSegmentEndTime > 0 && currentEndTime < lastSegmentEndTime - 10) {
+                      console.log('⚠️ Discontinuity detected in polling - seeking to live edge');
+                      const seekTime = Math.max(0, currentEndTime - 6);
+                      video.currentTime = seekTime;
+                      video.play().catch(() => {});
+                      discontinuityDetected = true;
+                    }
+                    
+                    // Check if segment count decreased significantly (indicates restart)
+                    if (oldCount > 10 && fragments.length < oldCount - 5) {
+                      console.log('⚠️ Segment count decreased significantly - likely restart, seeking to live edge');
                       const seekTime = Math.max(0, currentEndTime - 6);
                       video.currentTime = seekTime;
                       video.play().catch(() => {});
                     }
                     
                     lastSegmentEndTime = currentEndTime;
+                    lastSegmentStartTime = currentStartTime;
                   }
                 }
               }
@@ -177,12 +221,12 @@
             // Ignore errors during manifest check
             console.error('Error in manifest check:', e);
           }
-        }, 1000);
+        }, 500); // Check every 500ms for faster detection
         
         // Handle fragment loading - seek to live edge when new fragments are available after discontinuity
         hls.on(Hls.Events.FRAG_LOADED, function (event, data) {
           try {
-            // If we detected a discontinuity, check if we should seek forward
+            // If we detected a discontinuity, aggressively seek forward
             if (discontinuityDetected) {
               const levels = hls.levels;
               if (levels && levels.length > 0) {
@@ -195,11 +239,42 @@
                     const liveEdge = lastFragment.start + lastFragment.duration;
                     const currentTime = video.currentTime;
                     
-                    // If we're more than 10 seconds behind the live edge, seek forward
-                    if (liveEdge - currentTime > 10) {
-                      console.log(`Seeking to live edge: ${liveEdge.toFixed(1)}s (currently at ${currentTime.toFixed(1)}s)`);
+                    // If we're more than 5 seconds behind the live edge, seek forward aggressively
+                    if (liveEdge - currentTime > 5) {
+                      console.log(`⚠️ Fragment loaded - seeking to live edge: ${liveEdge.toFixed(1)}s (currently at ${currentTime.toFixed(1)}s)`);
                       video.currentTime = Math.max(0, liveEdge - 6);
+                      video.play().catch(() => {});
                       discontinuityDetected = false;
+                    }
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+        });
+        
+        // Also listen for when fragments are buffered - this can help detect new content
+        hls.on(Hls.Events.FRAG_BUFFERED, function (event, data) {
+          try {
+            if (discontinuityDetected) {
+              // When a fragment is buffered after discontinuity, check if we need to seek
+              const levels = hls.levels;
+              if (levels && levels.length > 0) {
+                const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
+                const level = levels[currentLevel];
+                if (level && level.details) {
+                  const fragments = level.details.fragments;
+                  if (fragments && fragments.length > 0) {
+                    const lastFragment = fragments[fragments.length - 1];
+                    const liveEdge = lastFragment.start + lastFragment.duration;
+                    const currentTime = video.currentTime;
+                    
+                    if (liveEdge - currentTime > 8) {
+                      console.log(`⚠️ Fragment buffered - seeking forward to ${liveEdge.toFixed(1)}s`);
+                      video.currentTime = Math.max(0, liveEdge - 6);
+                      video.play().catch(() => {});
                     }
                   }
                 }

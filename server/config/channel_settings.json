@@ -188,7 +188,7 @@
           "id": "jackie-chan-adventures",
           "label": "Jackie Chan Adventures",
           "path": "Jackie Chan Adventures",
-          "include": true,
+          "include": false,
           "playback_mode": "inherit",
           "weight": 1.0
         },
@@ -300,7 +300,7 @@
           "id": "south-park",
           "label": "South Park",
           "path": "South Park",
-          "include": false,
+          "include": true,
           "playback_mode": "inherit",
           "weight": 1.0
         },
