@@ -179,7 +179,20 @@ def build_overlay_args(video_height: int | None):
     return args, True
 
 
-def stream_file(src):
+def stream_file(src: str) -> bool:
+    """
+    Stream a video file to HLS output.
+    Returns True if streaming succeeded, False otherwise.
+    """
+    # Validate file exists before attempting to stream
+    if not os.path.exists(src):
+        print(f"ERROR: File not found: {src}", flush=True)
+        return False
+    
+    if not os.path.isfile(src):
+        print(f"ERROR: Path is not a file: {src}", flush=True)
+        return False
+    
     print(f"Streaming: {src}", flush=True)
     video_height = probe_video_height(src)
     overlay_args, has_overlay = build_overlay_args(video_height)
@@ -227,7 +240,14 @@ def stream_file(src):
         "/app/hls/stream%04d.ts",
         OUTPUT,
     ]
-    subprocess.run(cmd, check=False)
+    result = subprocess.run(cmd, check=False)
+    
+    # Check if streaming succeeded
+    if result.returncode != 0:
+        print(f"ERROR: FFmpeg failed with return code {result.returncode} for {src}", flush=True)
+        return False
+    
+    return True
 
 
 def record_playhead(src: str, index: int, playlist_mtime: float) -> None:
@@ -258,6 +278,21 @@ def run_stream():
             time.sleep(10)
             continue
 
+        # Validate playlist entries are valid files before processing
+        valid_files = []
+        for file_path in files:
+            if os.path.exists(file_path) and os.path.isfile(file_path):
+                valid_files.append(file_path)
+            else:
+                print(f"WARNING: Skipping invalid playlist entry: {file_path}", flush=True)
+        
+        if not valid_files:
+            print("No valid files in playlist, waiting...", flush=True)
+            time.sleep(10)
+            continue
+        
+        files = valid_files
+
         if last_played:
             try:
                 next_index = files.index(last_played) + 1
@@ -272,12 +307,16 @@ def run_stream():
 
             src = files[next_index]
             record_playhead(src, next_index, playlist_mtime)
-            stream_file(src)
+            
+            # Stream the file and only mark as watched if streaming succeeded
+            streaming_succeeded = stream_file(src)
             last_played = src
             
-            # Mark episode as watched when it finishes playing
-            if is_episode_entry(src):
+            # Mark episode as watched only if streaming completed successfully
+            if streaming_succeeded and is_episode_entry(src):
                 mark_episode_watched(src)
+            elif not streaming_succeeded:
+                print(f"WARNING: Skipping watch progress update for failed stream: {src}", flush=True)
 
             try:
                 files, playlist_mtime = load_playlist()
