@@ -20,8 +20,9 @@ API_PORT="8000"
 ADMIN_UI_PORT="5174"
 TEST_CLIENT_PORT="8081"
 
-# Media directory (customize this)
-MEDIA_DIR="${MEDIA_DIR:-$HOME/tv_media}"
+# Media directory (default: /Volumes/media/tv)
+# Override with MEDIA_DIR environment variable or --media-dir flag
+MEDIA_DIR="${MEDIA_DIR:-/Volumes/media/tv}"
 
 # PID file for tracking background processes
 PID_FILE="$SCRIPT_DIR/.start_pids"
@@ -69,6 +70,7 @@ start_docker() {
     if docker ps -a --format '{{.Names}}' | grep -q "^${DOCKER_CONTAINER}$"; then
         if docker ps --format '{{.Names}}' | grep -q "^${DOCKER_CONTAINER}$"; then
             echo -e "${YELLOW}Container ${DOCKER_CONTAINER} is already running${NC}"
+            echo -e "${YELLOW}Note: If you need to change volume mounts, stop and remove the container first${NC}"
         else
             echo -e "${BLUE}Starting existing container ${DOCKER_CONTAINER}...${NC}"
             docker start "$DOCKER_CONTAINER"
@@ -80,7 +82,46 @@ start_docker() {
             docker build -t "$DOCKER_IMAGE" -f server/Dockerfile .
         fi
         
+        # Verify and create required directories
+        if [ ! -d "$MEDIA_DIR" ]; then
+            echo -e "${YELLOW}Warning: Media directory does not exist: ${MEDIA_DIR}${NC}"
+            echo -e "${YELLOW}Creating directory...${NC}"
+            mkdir -p "$MEDIA_DIR" || {
+                echo -e "${RED}Error: Could not create media directory${NC}"
+                return 1
+            }
+        fi
+        
+        # Ensure HLS directory exists (needed for playhead/playlist state)
+        mkdir -p "$(pwd)/server/hls" || {
+            echo -e "${RED}Error: Could not create HLS directory${NC}"
+            return 1
+        }
+        
+        # Ensure assets directory exists
+        if [ ! -d "$(pwd)/assets" ]; then
+            echo -e "${YELLOW}Warning: Assets directory does not exist, creating...${NC}"
+            mkdir -p "$(pwd)/assets" || {
+                echo -e "${RED}Error: Could not create assets directory${NC}"
+                return 1
+            }
+        fi
+        
+        # Ensure config directory exists
+        if [ ! -d "$(pwd)/server/config" ]; then
+            echo -e "${YELLOW}Warning: Config directory does not exist, creating...${NC}"
+            mkdir -p "$(pwd)/server/config" || {
+                echo -e "${RED}Error: Could not create config directory${NC}"
+                return 1
+            }
+        fi
+        
         echo -e "${BLUE}Creating and starting container...${NC}"
+        echo -e "${BLUE}  Media directory: ${MEDIA_DIR} -> /media/tvchannel${NC}"
+        echo -e "${BLUE}  Assets: $(pwd)/assets -> /app/assets${NC}"
+        echo -e "${BLUE}  Config: $(pwd)/server/config -> /app/config${NC}"
+        echo -e "${BLUE}  HLS: $(pwd)/server/hls -> /app/hls${NC}"
+        
         docker run -d \
             -p "${DOCKER_PORT}:8080" \
             -v "${MEDIA_DIR}:/media/tvchannel" \
@@ -229,11 +270,11 @@ main() {
                 echo "  --no-api          Skip starting FastAPI backend"
                 echo "  --no-admin-ui     Skip starting React admin UI"
                 echo "  --test-client     Also start web test client"
-                echo "  --media-dir DIR   Set media directory (default: \$HOME/tv_media)"
+                echo "  --media-dir DIR   Set media directory (default: /Volumes/media/tv)"
                 echo "  --help            Show this help message"
                 echo ""
                 echo "Environment variables:"
-                echo "  MEDIA_DIR         Media directory path (default: \$HOME/tv_media)"
+                echo "  MEDIA_DIR         Media directory path (default: /Volumes/media/tv)"
                 exit 0
                 ;;
             *)
