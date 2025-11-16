@@ -44,11 +44,18 @@
           liveSyncDuration: 12,
           liveMaxLatencyDuration: 90,
           maxBufferSize: 60 * 1000 * 1000,
-          maxBufferHole: 0.5
+          maxBufferHole: 0.5,
+          startLevel: -1
         };
         const hls = new Hls(hlsConfig);
         hls.loadSource(streamUrl);
         hls.attachMedia(video);
+        
+        // Debounce buffer stall recovery
+        let lastStallRecovery = 0;
+        let recoveryInProgress = false;
+        const STALL_RECOVERY_COOLDOWN = 3000; // 3 seconds between recovery attempts
+        
         hls.on(Hls.Events.MANIFEST_PARSED, function () {
           video.play().catch(() => {});
         });
@@ -70,22 +77,53 @@
                 break;
             }
           } else if (data.type === 'mediaError' && data.details === 'bufferStalledError') {
-            // Non-fatal buffer stall - try to recover
-            console.log('Buffer stall detected, attempting recovery');
+            // Non-fatal buffer stall - try to recover with debouncing
+            const now = Date.now();
+            const timeSinceLastRecovery = now - lastStallRecovery;
             
-            // If buffer is critically low (< 2 seconds), pause briefly to let it rebuild
-            const bufferInfo = data.bufferInfo;
-            if (bufferInfo && bufferInfo.len < 2 && !video.paused) {
-              console.log('Buffer critically low, pausing briefly to rebuild');
-              const wasPlaying = !video.paused;
-              video.pause();
+            // Only attempt recovery if enough time has passed and we're not already recovering
+            if (!recoveryInProgress && timeSinceLastRecovery > STALL_RECOVERY_COOLDOWN) {
+              const bufferInfo = data.bufferInfo;
               
-              // Resume after a short delay to let buffer catch up
-              setTimeout(() => {
-                if (wasPlaying && video.readyState >= video.HAVE_CURRENT_DATA) {
-                  video.play().catch(() => {});
+              // Check if buffer is actually critically low
+              if (bufferInfo && bufferInfo.len < 2) {
+                console.log(`Buffer stall detected (${bufferInfo.len.toFixed(3)}s buffer), attempting recovery`);
+                lastStallRecovery = now;
+                recoveryInProgress = true;
+                
+                // Pause to let buffer rebuild
+                if (!video.paused) {
+                  video.pause();
                 }
-              }, 1000);
+                
+                // Wait longer and check buffer state before resuming
+                setTimeout(() => {
+                  const buffered = video.buffered;
+                  let hasBuffer = false;
+                  if (buffered.length > 0) {
+                    const currentTime = video.currentTime;
+                    for (let i = 0; i < buffered.length; i++) {
+                      if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                        const remaining = buffered.end(i) - currentTime;
+                        hasBuffer = remaining > 3; // Need at least 3 seconds
+                        break;
+                      }
+                    }
+                  }
+                  
+                  if (hasBuffer && video.readyState >= video.HAVE_FUTURE_DATA) {
+                    console.log('Buffer rebuilt, resuming playback');
+                    video.play().catch(() => {});
+                  } else {
+                    console.log('Buffer still low, waiting longer...');
+                    // Wait another 2 seconds
+                    setTimeout(() => {
+                      video.play().catch(() => {});
+                    }, 2000);
+                  }
+                  recoveryInProgress = false;
+                }, 2000);
+              }
             }
           }
         });

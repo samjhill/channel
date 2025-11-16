@@ -150,24 +150,53 @@ def ensure_bumper(
 ) -> str:
     os.makedirs(BUMPERS_DIR, exist_ok=True)
     base_name = safe_filename(show_title)
-    episode_code = format_episode_code(episode_metadata)
-    if episode_code:
-        filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
-    else:
-        filename = f"{base_name}.mp4"
-    bumper_path = os.path.join(BUMPERS_DIR, filename)
-    if not os.path.exists(bumper_path):
-        print(f"[Bumpers] Rendering 'Up Next' bumper for {show_title!r}")
+    
+    # First, ensure generic bumper exists (without episode info)
+    generic_filename = f"{base_name}.mp4"
+    generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
+    if not os.path.exists(generic_bumper_path):
+        print(f"[Bumpers] Rendering generic 'Up Next' bumper for {show_title!r}")
         render_up_next_bumper(
             show_title=show_title,
-            output_path=bumper_path,
+            output_path=generic_bumper_path,
             logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
-            episode_label=format_episode_label(episode_metadata),
+            episode_label=None,  # Generic bumper has no episode label
         )
-    return bumper_path
+    
+    # If episode metadata is provided, try to create/use specific bumper
+    episode_code = format_episode_code(episode_metadata)
+    if episode_code:
+        specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
+        specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
+        if not os.path.exists(specific_bumper_path):
+            # Only create specific bumper if generic exists
+            if os.path.exists(generic_bumper_path):
+                print(f"[Bumpers] Rendering specific 'Up Next' bumper for {show_title!r} - {episode_code}")
+                render_up_next_bumper(
+                    show_title=show_title,
+                    output_path=specific_bumper_path,
+                    logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
+                    episode_label=format_episode_label(episode_metadata),
+                )
+            else:
+                # Generic doesn't exist yet (shouldn't happen, but fallback)
+                print(f"[Bumpers] Generic bumper not found, using generic for {show_title!r}")
+                return generic_bumper_path
+        
+        # Return specific bumper if it exists, otherwise generic
+        if os.path.exists(specific_bumper_path):
+            return specific_bumper_path
+    
+    # Return generic bumper (either no episode metadata, or specific doesn't exist)
+    return generic_bumper_path
 
 
 def resolve_assets_root() -> str:
+    """
+    Resolve the root directory for static assets (logos, fonts, etc.).
+    This remains under /app/assets by default but can be overridden via
+    HBN_ASSETS_ROOT for local development.
+    """
     override = os.environ.get("HBN_ASSETS_ROOT")
     if override:
         return override
@@ -184,10 +213,33 @@ def resolve_assets_root() -> str:
     return DEFAULT_ASSETS_ROOT
 
 
+def resolve_bumpers_root(assets_root: str) -> str:
+    """
+    Resolve the root directory for generated bumper videos.
+
+    By default this lives under the assets tree:
+        <ASSETS_ROOT>/bumpers
+
+    but can be moved to an external volume (e.g. alongside your TV media)
+    by setting:
+
+        HBN_BUMPERS_ROOT=/media/tvchannel/bumpers
+
+    This keeps large rendered videos out of the Docker image and lets them
+    be shared across rebuilds.
+    """
+    override = os.environ.get("HBN_BUMPERS_ROOT")
+    if override:
+        return override
+
+    return os.path.join(assets_root, "bumpers")
+
+
 ASSETS_ROOT = resolve_assets_root()
-BUMPERS_DIR = os.path.join(ASSETS_ROOT, "bumpers", "up_next")
-SASSY_BUMPERS_DIR = os.path.join(ASSETS_ROOT, "bumpers", "sassy")
-NETWORK_BUMPERS_DIR = os.path.join(ASSETS_ROOT, "bumpers", "network")
+BUMPERS_ROOT = resolve_bumpers_root(ASSETS_ROOT)
+BUMPERS_DIR = os.path.join(BUMPERS_ROOT, "up_next")
+SASSY_BUMPERS_DIR = os.path.join(BUMPERS_ROOT, "sassy")
+NETWORK_BUMPERS_DIR = os.path.join(BUMPERS_ROOT, "network")
 try:
     PLAYLIST_EPISODE_LIMIT = max(
         1,
@@ -559,10 +611,30 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
 def write_episode_entry(handle, slot: EpisodeSlot, require_bumper: bool) -> None:
     bumper_path: Optional[str] = None
     metadata = extract_episode_metadata(slot.episode_path)
-    if require_bumper:
-        try:
+    # Always check for existing bumpers, but only render new ones if require_bumper=True
+    try:
+        base_name = safe_filename(slot.show_label)
+        episode_code = format_episode_code(metadata)
+        
+        # Check for specific bumper first
+        if episode_code:
+            specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
+            specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
+            if os.path.exists(specific_bumper_path):
+                bumper_path = specific_bumper_path
+        
+        # Fall back to generic bumper
+        if not bumper_path:
+            generic_filename = f"{base_name}.mp4"
+            generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
+            if os.path.exists(generic_bumper_path):
+                bumper_path = generic_bumper_path
+        
+        # If no existing bumper found and require_bumper=True, try to create one
+        if not bumper_path and require_bumper:
             bumper_path = ensure_bumper(slot.show_label, metadata)
-        except Exception as exc:  # pragma: no cover - best effort
+    except Exception as exc:  # pragma: no cover - best effort
+        if require_bumper:
             print(f"[Bumpers] Failed to render bumper for {slot.show_label}: {exc}")
 
     if bumper_path:

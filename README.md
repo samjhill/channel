@@ -94,7 +94,7 @@ Environment overrides:
 
 The system can automatically create “Up Next” bumpers for each show in your playlist. On first run, when `generate_playlist.py` encounters a show it hasn’t seen before, it:
 
-- Renders a 6-second bumper as `assets/bumpers/up_next/<show>.mp4`.
+- Renders a 6-second bumper as `assets/bumpers/up_next/<show>.mp4` by default.
 - Inserts that bumper before each episode for that show.
 
 You can also manually generate a bumper:
@@ -119,13 +119,26 @@ Between episodes the playlist can optionally splice in short “sassy card” bu
 - `probability_between_episodes` – chance (0–1) to insert a card after any given episode.
 - `duration_seconds`, `style` (either `hbn-cozy` gradient with logo/music or `adult-swim-minimal` black & white), and `messages` – customize cadence, look, and text.
 
-On playlist generation the renderer creates one MP4 per message under `assets/bumpers/sassy/` (only rerendering when a file is missing) and then deals them out from a shuffled deck so every phrase appears once before repeating. Tweak the JSON and rerun `generate_playlist.py` (or hit the Admin API “Save” button) to apply changes immediately.
+On playlist generation the renderer creates one MP4 per message under `assets/bumpers/sassy/` by default (only rerendering when a file is missing) and then deals them out from a shuffled deck so every phrase appears once before repeating. Tweak the JSON and rerun `generate_playlist.py` (or hit the Admin API “Save” button) to apply changes immediately.
 
 ### Network Branding Bumpers
 
 Full network branding bumpers featuring the complete HBN logo are automatically inserted periodically (approximately once per hour, or roughly every 25-30 episodes). These 8-second bumpers display the full logo with "HILLSIDE BROADCASTING NETWORK" and station info, animated with subtle fade-ins and scale effects. Each bumper is mixed with a randomly selected track from your music library for a polished, professional feel.
 
-The network bumper is generated once on first playlist build and stored at `assets/bumpers/network/network_brand.mp4`. It uses the full logo SVG (or PNG fallback) from `assets/branding/hbn_logo_bug.svg`.
+The network bumper is generated once on first playlist build and stored at `assets/bumpers/network/network_brand.mp4` by default. It uses the full logo SVG (or PNG fallback) from `assets/branding/hbn_logo_bug.svg`.
+
+To move all rendered bumpers out of the Docker image and onto your media volume (for example, under `/media/tvchannel/bumpers` which might be backed by `/Volumes/media/tv/bumpers` on the host), set:
+
+```bash
+# Inside the container (or via docker run -e / compose env)
+HBN_BUMPERS_ROOT=/media/tvchannel/bumpers
+```
+
+With this set, all new “Up Next”, sassy, and network bumpers are written under:
+
+- `/media/tvchannel/bumpers/up_next`
+- `/media/tvchannel/bumpers/sassy`
+- `/media/tvchannel/bumpers/network`
 
 ### Playlist Generation Details
 
