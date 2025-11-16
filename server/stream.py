@@ -9,7 +9,9 @@ from typing import Dict
 try:
     from playlist_service import (
         entry_type,
+        is_episode_entry,
         load_playlist_entries,
+        mark_episode_watched,
         resolve_playlist_path,
         save_playhead_state,
     )
@@ -22,7 +24,9 @@ except ImportError:
         sys.path.insert(0, str(repo_root))
     from server.playlist_service import (
         entry_type,
+        is_episode_entry,
         load_playlist_entries,
+        mark_episode_watched,
         resolve_playlist_path,
         save_playhead_state,
     )
@@ -270,6 +274,10 @@ def run_stream():
             record_playhead(src, next_index, playlist_mtime)
             stream_file(src)
             last_played = src
+            
+            # Mark episode as watched when it finishes playing
+            if is_episode_entry(src):
+                mark_episode_watched(src)
 
             try:
                 files, playlist_mtime = load_playlist()

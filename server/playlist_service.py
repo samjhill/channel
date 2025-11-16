@@ -20,13 +20,19 @@ FALLBACK_PLAYLIST_PATH = REPO_ROOT / "hls" / "playlist.txt"
 DEFAULT_PLAYHEAD_PATH = Path("/app/hls/playhead.json")
 FALLBACK_PLAYHEAD_PATH = REPO_ROOT / "hls" / "playhead.json"
 
+DEFAULT_WATCH_PROGRESS_PATH = Path("/app/hls/watch_progress.json")
+FALLBACK_WATCH_PROGRESS_PATH = REPO_ROOT / "hls" / "watch_progress.json"
+
 # Cache for paths, playlist entries, and playhead state
 _playlist_path_cache: Optional[Path] = None
 _playhead_path_cache: Optional[Path] = None
+_watch_progress_path_cache: Optional[Path] = None
 _playlist_cache: Optional[Tuple[List[str], float]] = None
 _playlist_mtime: float = 0.0
 _playhead_cache: Optional[Dict[str, Any]] = None
 _playhead_mtime: float = 0.0
+_watch_progress_cache: Optional[Dict[str, Any]] = None
+_watch_progress_mtime: float = 0.0
 
 
 def _resolve_path(env_var: str, default_path: Path, fallback_path: Path) -> Path:
@@ -306,5 +312,114 @@ def flatten_segments(segments: Iterable[Dict[str, Any]]) -> List[str]:
     for segment in segments:
         flattened.extend(segment.get("entries", []))
     return flattened
+
+
+def resolve_watch_progress_path() -> Path:
+    """Resolve watch progress path with caching."""
+    global _watch_progress_path_cache
+    
+    if _watch_progress_path_cache is not None:
+        return _watch_progress_path_cache
+    
+    _watch_progress_path_cache = _resolve_path(
+        "CHANNEL_WATCH_PROGRESS_PATH", 
+        DEFAULT_WATCH_PROGRESS_PATH, 
+        FALLBACK_WATCH_PROGRESS_PATH
+    )
+    return _watch_progress_path_cache
+
+
+def load_watch_progress() -> Dict[str, Any]:
+    """
+    Load watch progress state with mtime-based caching.
+    Returns a dict mapping episode paths to their watch status.
+    Format: { "episode_path": { "watched": bool, "watched_at": float, ... }, ... }
+    """
+    global _watch_progress_cache, _watch_progress_mtime
+    
+    progress_path = resolve_watch_progress_path()
+    if not progress_path.exists():
+        _watch_progress_cache = {"episodes": {}, "last_watched": None, "updated_at": 0.0}
+        _watch_progress_mtime = 0.0
+        return _watch_progress_cache
+    
+    # Check mtime to see if cache is still valid
+    try:
+        current_mtime = progress_path.stat().st_mtime
+    except (FileNotFoundError, OSError):
+        current_mtime = 0.0
+    
+    # Return cached version if file hasn't changed
+    if _watch_progress_cache is not None and abs(current_mtime - _watch_progress_mtime) < 0.001:
+        return _watch_progress_cache
+    
+    # Load from file
+    with progress_path.open("r", encoding="utf-8") as fh:
+        try:
+            progress = json.load(fh)
+            # Ensure required keys exist
+            if "episodes" not in progress:
+                progress["episodes"] = {}
+            if "last_watched" not in progress:
+                progress["last_watched"] = None
+        except json.JSONDecodeError:
+            progress = {"episodes": {}, "last_watched": None, "updated_at": 0.0}
+    
+    # Update cache
+    _watch_progress_cache = progress
+    _watch_progress_mtime = current_mtime
+    
+    return _watch_progress_cache
+
+
+def save_watch_progress(progress: Dict[str, Any]) -> None:
+    """Save watch progress state and update cache."""
+    global _watch_progress_cache, _watch_progress_mtime
+    
+    progress_path = resolve_watch_progress_path()
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    progress["updated_at"] = time.time()
+    
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", dir=str(progress_path.parent), delete=False
+    ) as tmp:
+        json.dump(progress, tmp, indent=2)
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(progress_path)
+    
+    # Update cache after write
+    try:
+        _watch_progress_mtime = progress_path.stat().st_mtime
+    except (FileNotFoundError, OSError):
+        _watch_progress_mtime = time.time()
+    _watch_progress_cache = progress
+
+
+def mark_episode_watched(episode_path: str) -> None:
+    """Mark an episode as watched."""
+    progress = load_watch_progress()
+    if "episodes" not in progress:
+        progress["episodes"] = {}
+    
+    progress["episodes"][episode_path] = {
+        "watched": True,
+        "watched_at": time.time(),
+    }
+    progress["last_watched"] = episode_path
+    
+    save_watch_progress(progress)
+
+
+def is_episode_watched(episode_path: str) -> bool:
+    """Check if an episode has been watched."""
+    progress = load_watch_progress()
+    episode_data = progress.get("episodes", {}).get(episode_path, {})
+    return episode_data.get("watched", False)
+
+
+def get_last_watched_episode() -> Optional[str]:
+    """Get the path of the last watched episode."""
+    progress = load_watch_progress()
+    return progress.get("last_watched")
 
 

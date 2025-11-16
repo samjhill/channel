@@ -147,7 +147,17 @@ With this set, all new “Up Next”, sassy, and network bumpers are written und
 - **Random mode**: still uses the existing weighted random logic based on per-show `weight`.
 - Playlist + playhead files live under `/app/hls/` when running in Docker. During local development (outside the container) the generator/streamer fall back to `server/hls/`.
 - For faster test iterations, playlist generation stops after the first 500 episodes by default. Override with `PLAYLIST_EPISODE_LIMIT=<int>` if you need longer queues.
-- Control how many bumper-free “seed” episodes get written immediately with `PLAYLIST_SEED_LIMIT=<int>` (defaults to 50). Set it to `0` if you’d rather block until every bumper is rendered.
+- Control how many bumper-free "seed" episodes get written immediately with `PLAYLIST_SEED_LIMIT=<int>` (defaults to 50). Set it to `0` if you'd rather block until every bumper is rendered.
+
+### Watch Progress Tracking
+
+The system automatically tracks which episodes have been watched and resumes playback from where you left off when the playlist is regenerated:
+
+- **Automatic tracking**: Episodes are marked as watched when they finish playing
+- **Resume on regeneration**: When the playlist is regenerated, it automatically starts from the next episode after the last watched one
+- **Progress storage**: Watch progress is stored in `/app/hls/watch_progress.json` (or `server/hls/watch_progress.json` during local development)
+- **Override path**: Set `CHANNEL_WATCH_PROGRESS_PATH` environment variable to use a custom location
+- If the last watched episode isn't found in the new playlist (e.g., show was removed), playback starts from the beginning
 
 ## 🧪 Local Mac Testing (no Raspberry Pi required)
 

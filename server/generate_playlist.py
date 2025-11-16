@@ -23,7 +23,11 @@ from scripts.bumpers.render_sassy_card import (
 )
 from scripts.bumpers.render_network_brand import render_network_brand_bumper
 from server.api.settings_service import load_settings
-from server.playlist_service import resolve_playlist_path
+from server.playlist_service import (
+    get_last_watched_episode,
+    is_episode_entry,
+    resolve_playlist_path,
+)
 
 PLAYLIST_FILE = str(resolve_playlist_path())
 DEFAULT_ASSETS_ROOT = "/app/assets"
@@ -617,12 +621,35 @@ def schedule_weighted_random(
 
 
 def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
+    """
+    Write the playlist file, starting from the next episode after the last watched one.
+    If no watch progress exists, starts from the beginning.
+    """
     seed_threshold = min(PLAYLIST_SEED_LIMIT, len(slots))
     seed_announced = False
 
+    # Find the last watched episode and resume from the next one
+    last_watched = get_last_watched_episode()
+    start_index = 0
+    
+    if last_watched and slots:
+        # Find the last watched episode in the slots
+        for idx, slot in enumerate(slots):
+            if slot.episode_path == last_watched:
+                # Start from the next episode
+                start_index = (idx + 1) % len(slots)
+                print(
+                    f"[Playlist] Resuming from episode after: {last_watched}",
+                    flush=True,
+                )
+                break
+    
+    # Rotate slots to start from the resume point
+    rotated_slots = list(slots[start_index:]) + list(slots[:start_index])
+
     os.makedirs(os.path.dirname(PLAYLIST_FILE), exist_ok=True)
     with open(PLAYLIST_FILE, "w", encoding="utf-8") as handle:
-        for idx, slot in enumerate(slots):
+        for idx, slot in enumerate(rotated_slots):
             require_bumper = idx >= seed_threshold
             write_episode_entry(handle, slot, require_bumper)
 
@@ -630,7 +657,7 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                 seed_threshold
                 and not seed_announced
                 and idx + 1 == seed_threshold
-                and idx + 1 < len(slots)
+                and idx + 1 < len(rotated_slots)
             ):
                 print(
                     f"[Playlist] Seeded first {seed_threshold} episodes without waiting for bumpers.",
@@ -639,7 +666,7 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                 print("[Playlist] Continuing to append bumpers in the background...", flush=True)
                 seed_announced = True
 
-            if idx < len(slots) - 1:
+            if idx < len(rotated_slots) - 1:
                 maybe_write_network_bumper(handle)
                 maybe_write_sassy_card(handle)
 
