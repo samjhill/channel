@@ -28,7 +28,7 @@ function App() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [activeView, setActiveView] = useState<"settings" | "playlist">("settings");
+  const [activeView, setActiveView] = useState<"settings" | "playlist">("playlist");
 
   useEffect(() => {
     fetchChannels()
