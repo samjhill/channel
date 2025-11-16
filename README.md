@@ -29,6 +29,7 @@ Your stream becomes available at `http://SERVER_IP:8080/channel/stream.m3u8`.
 
 - Edit `server/config/channel_settings.json` (e.g., tweak `include_shows`) and keep it under version control or customize copies per deployment.
 - Mount the config directory (`-v "$(pwd)/server/config:/app/config"`) so changes take effect immediately without rebuilding.
+- Config files (`channel_settings.json` and `sassy_messages.json`) are included in the Docker image by default, so they're available even without mounting the volume.
 - Optional overrides:
   - `CHANNEL_CONFIG` – point to a different JSON path inside the container.
   - `INCLUDE_SHOWS="Show A,Show B"` – quick one-off filter that takes precedence over the JSON file.

@@ -18,6 +18,8 @@ COPY server/__init__.py /app/server/__init__.py
 COPY server/playlist_service.py /app/server/playlist_service.py
 COPY server/api /app/server/api
 COPY server/nginx.conf /etc/nginx/nginx.conf
+# Copy config files (channel_settings.json, sassy_messages.json)
+# Note: If a volume is mounted at /app/config, it will override these files
 COPY server/config /app/config
 COPY assets /app/assets
 COPY scripts /app/scripts
