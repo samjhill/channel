@@ -67,28 +67,40 @@ def restart_media_server() -> bool:
     container_name = os.environ.get(DEFAULT_CONTAINER_ENV, FALLBACK_CONTAINER_NAME)
     
     if docker_bin and container_name:
+        # Sync config file to container first (in case volume mount isn't syncing)
+        config_path = REPO_ROOT / "server" / "config" / "channel_settings.json"
+        if config_path.exists():
+            sync_cmd = f"{docker_bin} cp {shlex.quote(str(config_path))} {shlex.quote(container_name)}:/app/config/channel_settings.json"
+            LOGGER.info("Syncing config file to container...")
+            sync_success, sync_output = _run_command(sync_cmd, capture_output=True)
+            if sync_success:
+                LOGGER.info("Config file synced to container successfully.")
+            else:
+                LOGGER.warning("Failed to sync config file to container: %s", sync_output)
+        
         # First, try to restart the container
         docker_cmd = f"{docker_bin} restart {shlex.quote(container_name)}"
         LOGGER.info("Attempting to restart Docker container: %s", container_name)
-        success, output = _run_command(docker_cmd, capture_output=True)
+        restart_success, restart_output = _run_command(docker_cmd, capture_output=True)
         
-        if success:
-            LOGGER.info("Docker container '%s' restarted successfully.", container_name)
+        # Always regenerate playlist after restart (or if restart failed)
+        # This ensures the playlist reflects the latest config
+        regenerate_cmd = f"{docker_bin} exec {shlex.quote(container_name)} python3 /app/generate_playlist.py"
+        LOGGER.info("Regenerating playlist inside container...")
+        regen_success, regen_output = _run_command(regenerate_cmd, capture_output=True)
+        
+        if regen_success:
+            LOGGER.info("Playlist regenerated inside container successfully.")
+            if restart_success:
+                LOGGER.info("Docker container '%s' restarted and playlist regenerated.", container_name)
+            else:
+                LOGGER.warning("Docker restart failed, but playlist was regenerated: %s", restart_output)
             return True
         else:
-            LOGGER.warning("Docker restart failed: %s. Trying to regenerate playlist inside container...", output)
-            
-            # Fallback: regenerate playlist inside the container
-            # This ensures the playlist reflects the new config even if restart fails
-            regenerate_cmd = f"{docker_bin} exec {shlex.quote(container_name)} python3 /app/generate_playlist.py"
-            LOGGER.info("Regenerating playlist inside container...")
-            success, output = _run_command(regenerate_cmd, capture_output=True)
-            
-            if success:
-                LOGGER.info("Playlist regenerated inside container successfully.")
-                return True
-            else:
-                LOGGER.error("Failed to regenerate playlist inside container: %s", output)
+            LOGGER.error("Failed to regenerate playlist inside container: %s", regen_output)
+            if restart_success:
+                LOGGER.warning("Container restarted but playlist regeneration failed.")
+            return False
 
     # Last resort: try to regenerate playlist on host (if running outside Docker)
     LOGGER.warning("Docker not available, attempting to regenerate playlist on host...")
