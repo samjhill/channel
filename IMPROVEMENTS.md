@@ -4,18 +4,7 @@ Generated: 2025-01-27
 
 ## 🔴 High Priority - Reliability & Robustness
 
-### 1. Process Monitoring & Auto-Restart
-**Current Issue**: `entrypoint.sh` starts processes in background with no monitoring. If `generate_playlist.py` or `stream.py` crashes, the container keeps running but nothing works.
-
-**Improvement**:
-- Add process monitoring (e.g., using `supervisord` or a simple watchdog script)
-- Auto-restart crashed processes with exponential backoff
-- Health check endpoint to detect when streaming has stopped
-- Alert/logging when processes crash
-
-**Impact**: Prevents silent failures, improves uptime
-
-### 4. HLS Segment Cleanup
+### 1. HLS Segment Cleanup
 **Current Issue**: Old HLS segments can accumulate if stream crashes, consuming disk space.
 
 **Improvement**:
@@ -25,7 +14,7 @@ Generated: 2025-01-27
 
 **Impact**: Prevents disk space issues
 
-### 5. Better Error Recovery in Stream Loop
+### 2. Better Error Recovery in Stream Loop
 **Current Issue**: If a file fails to stream, the loop continues but there's limited retry logic.
 
 **Improvement**:
@@ -328,9 +317,8 @@ Generated: 2025-01-27
 ## 📈 Recommended Implementation Order
 
 ### Phase 1: Reliability (Weeks 1-2)
-1. Process monitoring (#1)
-2. HLS segment cleanup (#4)
-3. Better error recovery (#5)
+1. HLS segment cleanup (#1)
+2. Better error recovery (#2)
 
 ### Phase 2: User Experience (Weeks 3-4)
 4. Configuration validation (#6)
