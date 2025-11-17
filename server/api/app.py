@@ -368,7 +368,16 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
         next_index = 0
         LOGGER.debug("Wrapped around to index 0")
 
-    # Update playhead to point to the next item
+    # Advance to the next actual media entry (skip markers like BUMPER_BLOCK / WEATHER_BUMPER)
+    def _is_marker(entry: str) -> bool:
+        normalized = entry.strip().upper()
+        return normalized in {"BUMPER_BLOCK", "WEATHER_BUMPER"}
+
+    safety_counter = 0
+    while _is_marker(entries[next_index]) and safety_counter < len(entries):
+        next_index = (next_index + 1) % len(entries)
+        safety_counter += 1
+
     next_path = entries[next_index]
     new_state = {
         "current_path": next_path,
