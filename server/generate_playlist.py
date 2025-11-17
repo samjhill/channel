@@ -32,6 +32,7 @@ from server.playlist_service import (
     is_episode_entry,
     resolve_playlist_path,
 )
+from server.services.weather_service import load_weather_config
 
 PLAYLIST_FILE = str(resolve_playlist_path())
 DEFAULT_ASSETS_ROOT = "/app/assets"
@@ -552,6 +553,30 @@ class NetworkBumperManager:
 
 NETWORK_BUMPERS = NetworkBumperManager()
 
+# Special marker for weather bumpers (rendered at playback time)
+WEATHER_BUMPER_MARKER = "WEATHER_BUMPER"
+
+
+def maybe_write_weather_bumper(handle) -> None:
+    """
+    Conditionally insert a weather bumper marker into the playlist.
+    Weather bumpers are rendered at playback time for fresh data.
+    """
+    try:
+        cfg = load_weather_config()
+        if not cfg.get("enabled", True):
+            return
+        
+        probability = cfg.get("probability_between_episodes", 0.0)
+        if probability <= 0 or random.random() > probability:
+            return
+        
+        handle.write(WEATHER_BUMPER_MARKER + "\n")
+        handle.flush()
+    except Exception as exc:
+        # Best effort - if weather config is misconfigured, just skip
+        LOGGER.debug("Failed to check weather config: %s", exc)
+
 
 def resolve_channel(settings: Dict[str, Any]) -> Dict[str, Any]:
     channels = settings.get("channels") or []
@@ -856,6 +881,15 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
 
     os.makedirs(os.path.dirname(PLAYLIST_FILE), exist_ok=True)
     with open(PLAYLIST_FILE, "w", encoding="utf-8") as handle:
+        # Add weather bumper at the very beginning for testing (if enabled)
+        try:
+            cfg = load_weather_config()
+            if cfg.get("enabled", True):
+                handle.write(WEATHER_BUMPER_MARKER + "\n")
+        except Exception:
+            # If config load fails, skip the weather bumper
+            pass
+        
         for idx, slot in enumerate(rotated_slots):
             require_bumper = idx >= seed_threshold
 
@@ -908,6 +942,7 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                 seed_announced = True
 
             if idx < len(rotated_slots) - 1:
+                maybe_write_weather_bumper(handle)
                 maybe_write_network_bumper(handle)
                 maybe_write_sassy_card(handle)
 

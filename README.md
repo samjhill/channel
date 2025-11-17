@@ -11,6 +11,7 @@ The basic idea is simple: you point it at a folder of videos, and it creates a n
 - **Automatic playlist generation** - Just drop your videos in folders and it figures out the rest
 - **"Up Next" bumpers** - Little cards that show what's coming up, just like real TV
 - **Sassy intermissions** - Short cards between episodes (inspired by Adult Swim's style)
+- **Weather bumpers** - Optional dynamic "Current Weather" cards with fresh weather data
 - **Web admin panel** - A nice React interface for managing everything
 - **Watch progress tracking** - Remembers where you left off
 - **Real-time playlist control** - Skip episodes or reorder the queue without restarting
@@ -264,6 +265,55 @@ One of my favorite features is that you can edit the playlist while it's playing
 - Skip the current episode (jumps to the next one immediately)
 
 All of this happens by editing the playlist file in place—the streamer picks up the changes automatically. No restart needed.
+
+### Weather Bumpers
+
+HBN supports optional "Current Weather" bumpers between episodes. These are short (≈5 seconds) cards that show current weather for a configured location.
+
+Configure them in:
+
+```text
+server/config/weather_bumpers.json
+```
+
+and set an OpenWeather API key in the `HBN_WEATHER_API_KEY` environment variable.
+
+The system:
+- Inserts logical weather slots between episodes according to `probability_between_episodes` (default: 25%)
+- Just before each slot, fetches (cached) current weather and renders a short bumper on the fly
+- This keeps weather info reasonably fresh even for long playlists (500+ episodes)
+- Weather data is cached for 7 minutes by default to avoid over-calling the API
+
+Example configuration:
+
+```json
+{
+  "enabled": true,
+  "provider": "openweathermap",
+  "api_key_env_var": "HBN_WEATHER_API_KEY",
+  "location": {
+    "city": "Newark",
+    "region": "NJ",
+    "country": "US",
+    "lat": 40.7357,
+    "lon": -74.1724
+  },
+  "units": "imperial",
+  "duration_seconds": 5,
+  "cache_ttl_minutes": 7,
+  "probability_between_episodes": 0.25
+}
+```
+
+When running in Docker, pass the API key via environment variable:
+
+```bash
+docker run -d \
+  -e HBN_WEATHER_API_KEY=your_api_key_here \
+  ...
+```
+
+Get a free OpenWeatherMap API key at: https://openweathermap.org/api
 
 ## Development
 

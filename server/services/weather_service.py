@@ -1,0 +1,116 @@
+"""
+Weather service for fetching and caching current weather data.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+import os
+import time
+import json
+from typing import Optional
+
+try:
+    import requests
+except ImportError:
+    requests = None
+
+CONFIG_PATH = Path(__file__).parent.parent / "config" / "weather_bumpers.json"
+
+
+@dataclass
+class WeatherInfo:
+    temperature: float
+    feels_like: float
+    condition: str
+    city: str
+    region: str
+    country: str
+
+
+_cache = {
+    "timestamp": 0.0,
+    "data": None,  # type: Optional[WeatherInfo]
+}
+
+
+def load_weather_config() -> dict:
+    """Load weather bumper configuration from JSON file."""
+    if not CONFIG_PATH.exists():
+        return {"enabled": False}
+    
+    with CONFIG_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def get_current_weather() -> Optional[WeatherInfo]:
+    """
+    Returns current weather for the configured location, or None if disabled,
+    misconfigured, or if the API call fails.
+    
+    Uses an in-memory cache with TTL from config.
+    """
+    cfg = load_weather_config()
+    if not cfg.get("enabled", True):
+        return None
+    
+    ttl_seconds = cfg.get("cache_ttl_minutes", 7) * 60
+    now = time.time()
+    
+    # Check cache first
+    if _cache["data"] is not None and now - _cache["timestamp"] < ttl_seconds:
+        return _cache["data"]
+    
+    # Cache expired or empty, need to fetch
+    if requests is None:
+        return None
+    
+    api_var = cfg.get("api_key_env_var", "HBN_WEATHER_API_KEY")
+    api_key = os.getenv(api_var)
+    if not api_key:
+        return None
+    
+    location = cfg.get("location", {})
+    lat = location.get("lat")
+    lon = location.get("lon")
+    
+    if lat is None or lon is None:
+        return None
+    
+    units = cfg.get("units", "imperial")
+    
+    try:
+        resp = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={"lat": lat, "lon": lon, "appid": api_key, "units": units},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception:
+        return None
+    
+    weather_list = data.get("weather", [])
+    if not weather_list:
+        return None
+    
+    condition = weather_list[0].get("description", "").title()
+    main_data = data.get("main", {})
+    temp = float(main_data.get("temp", 0))
+    feels = float(main_data.get("feels_like", temp))
+    
+    info = WeatherInfo(
+        temperature=temp,
+        feels_like=feels,
+        condition=condition,
+        city=location.get("city", "Unknown"),
+        region=location.get("region", ""),
+        country=location.get("country", ""),
+    )
+    
+    # Update cache
+    _cache["timestamp"] = now
+    _cache["data"] = info
+    
+    return info
+

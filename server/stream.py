@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, Optional
@@ -103,6 +104,45 @@ BUG_POSITION = os.environ.get("HBN_BUG_POSITION", "top-right").lower()
 # Limited to 1000 entries to prevent memory leaks
 _video_height_cache: Dict[str, Optional[int]] = {}
 _MAX_VIDEO_HEIGHT_CACHE_SIZE = 1000
+
+
+WEATHER_BUMPER_MARKER = "WEATHER_BUMPER"
+
+# Temporary directory for JIT-rendered weather bumpers
+_weather_bumper_temp_dir: Optional[Path] = None
+
+
+def _get_weather_temp_dir() -> Path:
+    """Get or create the temp directory for weather bumpers."""
+    global _weather_bumper_temp_dir
+    if _weather_bumper_temp_dir is None:
+        _weather_bumper_temp_dir = Path(tempfile.mkdtemp(prefix="weather_runtime_"))
+    return _weather_bumper_temp_dir
+
+
+def is_weather_bumper(entry: str) -> bool:
+    """Check if an entry is a weather bumper marker."""
+    return entry.strip() == WEATHER_BUMPER_MARKER
+
+
+def _render_weather_bumper_jit() -> Optional[str]:
+    """Render a weather bumper just-in-time for playback."""
+    try:
+        from scripts.bumpers.render_weather_bumper import render_weather_bumper
+    except ImportError:
+        import sys
+        repo_root = Path(__file__).resolve().parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from scripts.bumpers.render_weather_bumper import render_weather_bumper
+    
+    temp_dir = _get_weather_temp_dir()
+    out_path = temp_dir / f"weather_{int(time.time())}.mp4"
+    
+    success = render_weather_bumper(str(out_path))
+    if success and out_path.exists():
+        return str(out_path)
+    return None
 
 
 def load_playlist():
@@ -229,7 +269,22 @@ def stream_file(
         LOGGER.error("Path is not a file: %s", src)
         return False
 
-    LOGGER.info("Streaming: %s", src)
+    LOGGER.info("Streaming: %s (index %d)", src, expected_index)
+    
+    # CRITICAL: When switching files, we need to ensure clients get fresh content
+    # Check if we're switching to a different file (not continuing the same one)
+    is_file_switch = True
+    try:
+        if os.path.exists(OUTPUT):
+            # Read last few lines of playlist to see what was last streamed
+            with open(OUTPUT, 'r') as f:
+                lines = f.readlines()
+                # If playlist has segments, we're switching files
+                if any('stream' in line and '.ts' in line for line in lines[-20:]):
+                    is_file_switch = True
+    except Exception:
+        pass
+    
     video_height = probe_video_height(src)
     overlay_args, has_overlay = build_overlay_args(video_height)
     cmd = [
@@ -275,18 +330,17 @@ def stream_file(
         "-hls_flags",
         "delete_segments+append_list+omit_endlist+discont_start+program_date_time",
         # Added program_date_time for better synchronization
-        "-hls_playlist_type",
-        "live",  # Explicitly mark as live stream
         "-hls_segment_type",
         "mpegts",
         "-hls_segment_filename",
         "/app/hls/stream%04d.ts",
-        "-hls_segment_options",
-        "movflags=+faststart",  # Optimize segments for streaming
         OUTPUT,
     ]
 
     # Start FFmpeg as a subprocess so we can monitor it
+    # Log the command for debugging (truncate long filter expressions)
+    cmd_str = " ".join(cmd[:10]) + " ... [filter_complex] ... " + " ".join(cmd[-5:])
+    LOGGER.debug("FFmpeg command: %s", cmd_str)
     process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
     # Check for playhead updates every 0.5 seconds while streaming
@@ -332,31 +386,32 @@ def stream_file(
                     )
 
                 # If playhead points to a different file, skip was triggered
-                if paths_differ:
+                # ALWAYS check index first - it's the most reliable indicator
+                playhead_index = playhead_state.get("current_index", -1)
+                index_differs = playhead_index >= 0 and playhead_index != expected_index
+                
+                if paths_differ or index_differs:
                     # Verify this is a valid skip (same playlist, different file)
                     # Use a more lenient mtime check (within 1 second) to handle filesystem timing differences
                     mtime_match = abs(playhead_mtime - playlist_mtime) < 1.0
 
-                    # If mtime doesn't match but playhead was recently updated, still allow skip
-                    # Check if playhead was updated in the last 10 seconds (window for Docker sync delays)
+                    # REMOVED time restrictions - always respect playhead if index differs
+                    # The playhead index is the authoritative source, not timing
+                    # Allow skip if index differs OR (path differs AND mtime matches)
+                    # Index difference is always authoritative
                     playhead_updated_at = playhead_state.get("updated_at", 0.0)
                     current_time_check = time.time()
-                    recent_update = (
-                        playhead_updated_at > 0
-                        and (current_time_check - playhead_updated_at) < 10.0
-                    )
-
-                    # Allow skip if mtime matches OR if playhead was recently updated
-                    # This handles cases where playlists are out of sync but skip was just triggered
-                    if mtime_match or recent_update:
+                    if index_differs or (paths_differ and mtime_match):
                         LOGGER.info(
-                            "Skip detected: interrupting %s to jump to %s (mtime_match=%s, recent_update=%s, updated_at=%s, current_time=%s)",
+                            "Skip detected: interrupting %s (index %d) to jump to %s (index %d) - mtime_match=%s, index_differs=%s, updated_at=%.2f, age=%.2fs",
                             src,
+                            expected_index,
                             playhead_path,
+                            playhead_index,
                             mtime_match,
-                            recent_update,
+                            index_differs,
                             playhead_updated_at,
-                            current_time_check,
+                            current_time_check - playhead_updated_at if playhead_updated_at > 0 else 0,
                         )
                         # Terminate FFmpeg process
                         process.terminate()
@@ -395,42 +450,57 @@ def stream_file(
                 "FFmpeg failed with return code %d for %s", returncode, src
             )
             if stderr_output:
-                LOGGER.error("FFmpeg stderr: %s", stderr_output[:500])
+                # Log more of the error to see what's wrong
+                LOGGER.error("FFmpeg stderr (first 1000 chars): %s", stderr_output[:1000])
+                # Also try to extract the actual error message
+                error_lines = stderr_output.split('\n')
+                for line in error_lines:
+                    if any(keyword in line.lower() for keyword in ['error', 'failed', 'invalid', 'cannot', 'unable']):
+                        LOGGER.error("FFmpeg error line: %s", line)
             return False
 
     return True
 
 
-def record_playhead(src: str, index: int, playlist_mtime: float) -> None:
-    """Record playhead state, but don't overwrite if it was recently updated externally (skip command)."""
+def record_playhead(src: str, index: int, playlist_mtime: float, force: bool = False) -> None:
+    """Record playhead state, but don't overwrite if it was recently updated externally (skip command).
+    
+    Args:
+        src: Path to the current file
+        index: Index in the playlist
+        playlist_mtime: Playlist modification time
+        force: If True, always update even if recently updated externally (for post-stream updates)
+    """
     # Check if playhead was recently updated externally (within last 2 seconds)
     # Only skip if it points to a different file (skip command), not if it's the same (normal playback)
-    existing_state = load_playhead_state(force_reload=True)
-    if existing_state:
-        existing_updated_at = existing_state.get("updated_at", 0.0)
-        existing_path = existing_state.get("current_path")
-        if existing_updated_at > 0 and (time.time() - existing_updated_at) < 2.0:
-            # Check if the existing playhead points to a different file (skip command)
-            if _normalize_path:
-                normalized_existing = (
-                    _normalize_path(existing_path) if existing_path else None
-                )
-                normalized_src = _normalize_path(src)
-                paths_differ = (
-                    normalized_existing != normalized_src
-                    if normalized_existing
-                    else True
-                )
-            else:
-                paths_differ = existing_path != src if existing_path else True
+    # Unless force=True, which allows updates after successful streaming
+    if not force:
+        existing_state = load_playhead_state(force_reload=True)
+        if existing_state:
+            existing_updated_at = existing_state.get("updated_at", 0.0)
+            existing_path = existing_state.get("current_path")
+            if existing_updated_at > 0 and (time.time() - existing_updated_at) < 2.0:
+                # Check if the existing playhead points to a different file (skip command)
+                if _normalize_path:
+                    normalized_existing = (
+                        _normalize_path(existing_path) if existing_path else None
+                    )
+                    normalized_src = _normalize_path(src)
+                    paths_differ = (
+                        normalized_existing != normalized_src
+                        if normalized_existing
+                        else True
+                    )
+                else:
+                    paths_differ = existing_path != src if existing_path else True
 
-            if paths_differ:
-                # Playhead was recently updated externally to a different file (skip command), don't overwrite
-                LOGGER.debug(
-                    "Skipping playhead record - was recently updated externally to different file (age: %.2fs)",
-                    time.time() - existing_updated_at,
-                )
-                return
+                if paths_differ:
+                    # Playhead was recently updated externally to a different file (skip command), don't overwrite
+                    LOGGER.debug(
+                        "Skipping playhead record - was recently updated externally to different file (age: %.2fs)",
+                        time.time() - existing_updated_at,
+                    )
+                    return
 
     state = {
         "current_path": src,
@@ -488,11 +558,16 @@ def run_stream():
             _valid_files_cache.clear()
             _last_playlist_hash = playlist_hash
 
-        # Validate playlist entries are valid files before processing
+        # Process playlist entries - handle weather markers and validate files
         # Use cache to avoid repeated os.path.exists calls
         valid_files = []
         for file_path in files:
-            # Check cache first
+            # Weather bumpers are markers, not files - keep them as-is
+            if is_weather_bumper(file_path):
+                valid_files.append(file_path)
+                continue
+            
+            # Check cache first for regular files
             if file_path in _valid_files_cache:
                 if _valid_files_cache[file_path]:
                     valid_files.append(file_path)
@@ -513,28 +588,96 @@ def run_stream():
 
         files = valid_files
 
-        if last_played:
-            try:
-                next_index = files.index(last_played) + 1
-            except ValueError:
-                next_index = 0
+        # CRITICAL: Always start from playhead if available, not from last_played
+        # This ensures we resume from where we actually are, not where we think we are
+        playhead_state = load_playhead_state(force_reload=True)
+        if playhead_state and playhead_state.get("current_index") is not None:
+            playhead_index = playhead_state.get("current_index", -1)
+            playhead_path = playhead_state.get("current_path")
+            playhead_mtime = playhead_state.get("playlist_mtime", 0.0)
+            
+            # Check if playhead index is valid and playlist hasn't changed significantly
+            if playhead_index >= 0 and playhead_index < len(files):
+                # Verify the playhead path matches what's at that index (playlist might have changed)
+                if _normalize_path:
+                    normalized_playhead = _normalize_path(playhead_path) if playhead_path else None
+                    normalized_at_index = _normalize_path(files[playhead_index]) if playhead_index < len(files) else None
+                    path_matches = normalized_playhead == normalized_at_index
+                else:
+                    path_matches = playhead_path == files[playhead_index] if playhead_index < len(files) else False
+                
+                # Use playhead index if path matches OR if mtime is close (playlist might have shifted slightly)
+                mtime_match = abs(playhead_mtime - playlist_mtime) < 5.0  # 5 second tolerance
+                if path_matches or mtime_match:
+                    next_index = playhead_index
+                    LOGGER.info("Resuming from playhead: index %d (%s)", next_index, files[next_index] if next_index < len(files) else "invalid")
+                else:
+                    # Playhead doesn't match, search for it
+                    try:
+                        if _normalize_path and playhead_path:
+                            normalized_playhead = _normalize_path(playhead_path)
+                            for idx, file_path in enumerate(files):
+                                if _normalize_path(file_path) == normalized_playhead:
+                                    next_index = idx
+                                    LOGGER.info("Found playhead path at index %d (was %d)", next_index, playhead_index)
+                                    break
+                            else:
+                                next_index = 0
+                        else:
+                            next_index = files.index(playhead_path) if playhead_path in files else 0
+                    except (ValueError, AttributeError):
+                        next_index = 0
+            else:
+                # Playhead index is invalid, start from beginning or last_played
+                if last_played:
+                    try:
+                        next_index = files.index(last_played) + 1
+                    except ValueError:
+                        next_index = 0
+                else:
+                    next_index = 0
         else:
-            next_index = 0
+            # No playhead state, use last_played or start from beginning
+            if last_played:
+                try:
+                    next_index = files.index(last_played) + 1
+                except ValueError:
+                    next_index = 0
+            else:
+                next_index = 0
 
         while files:
             if next_index >= len(files):
                 next_index = 0
 
-            # Determine the normal next file to stream
+            # CRITICAL: Always check playhead FIRST before determining what to stream
+            # This ensures we always stream what the playhead says, not what we think should be next
+            playhead_state = load_playhead_state(force_reload=True)
+            playhead_updated_externally = False
+            
+            # If playhead exists and has a valid index, USE IT - this is the source of truth
+            if playhead_state and playhead_state.get("current_index") is not None:
+                playhead_index = playhead_state.get("current_index", -1)
+                playhead_path = playhead_state.get("current_path")
+                playhead_mtime = playhead_state.get("playlist_mtime", 0.0)
+                
+                # If playhead index is valid and different from what we were going to stream, use it
+                if playhead_index >= 0 and playhead_index < len(files):
+                    if playhead_index != next_index:
+                        # Playhead points to a different file - use it (this handles skip commands)
+                        next_index = playhead_index
+                        playhead_updated_externally = True
+                        LOGGER.info(
+                            "Using playhead index %d instead of calculated index %d: %s",
+                            playhead_index,
+                            next_index if not playhead_updated_externally else "N/A",
+                            files[playhead_index] if playhead_index < len(files) else "invalid"
+                        )
+            
+            # Determine the normal next file to stream (may have been overridden by playhead above)
             normal_next_src = files[next_index]
 
-            # Check if playhead has been updated externally (e.g., by skip API)
-            # This allows the skip button to work by jumping to the next episode
-            # Only treat as external update if playhead points to a DIFFERENT file than normal flow
-            # AND it's not the file we just finished streaming (to avoid loops)
-            playhead_state = load_playhead_state()
-            playhead_updated_externally = False
-
+            # Additional check: if playhead path differs from what we're about to stream, verify it
             if playhead_state and playhead_state.get("current_path"):
                 playhead_path = playhead_state.get("current_path")
                 playhead_index = playhead_state.get("current_index", -1)
@@ -586,38 +729,59 @@ def run_stream():
                 # BUT ignore if playhead points to the file we just finished (prevents infinite loops)
                 mtime_match = abs(playhead_mtime - playlist_mtime) < 1.0
                 playhead_updated_at = playhead_state.get("updated_at", 0.0)
-                recent_update = (
-                    playhead_updated_at > 0
-                    and (time.time() - playhead_updated_at) < 10.0
+                # REMOVED time window restriction - always respect playhead if index differs
+                # The playhead is the source of truth, not timing
+                playhead_index_matches = (
+                    playhead_index >= 0
+                    and playhead_index < len(files)
+                    and playhead_index != next_index
                 )
-
-                # Only jump if playhead differs from normal flow AND was recently updated (skip command)
-                # AND it's not the file we just finished streaming
+                
+                # ALWAYS jump if playhead index differs - this is the most reliable indicator
+                # Don't check timing - the playhead is always authoritative
                 if (
                     playhead_matches
                     and playhead_differs_from_normal
                     and not playhead_is_last_played
-                    and (mtime_match or recent_update)
+                    and playhead_index_matches
                 ):
-                    next_index = matching_index
-                    src = files[
-                        matching_index
-                    ]  # Use the actual file path from the playlist
+                    # Prefer using playhead_index if it's valid, otherwise use matching_index
+                    target_index = playhead_index if playhead_index_matches else matching_index
+                    next_index = target_index
+                    src = files[target_index]  # Use the actual file path from the playlist
                     playhead_updated_externally = True
                     LOGGER.info(
-                        "Playhead updated externally: jumping to %s (index %d)",
+                        "Playhead updated externally: jumping to %s (index %d, playhead_index=%d)",
                         src,
                         next_index,
+                        playhead_index,
                     )
 
             if not playhead_updated_externally:
                 # Normal flow - use calculated next_index
                 src = normal_next_src
 
-            # Only record playhead if it wasn't updated externally (to avoid overwriting skip commands)
-            # If playhead was updated externally, the skip API already set it correctly
-            if not playhead_updated_externally:
+            # Handle weather bumper markers - render on-the-fly
+            if is_weather_bumper(src):
+                weather_path = _render_weather_bumper_jit()
+                if weather_path:
+                    src = weather_path
+                    LOGGER.info("Rendered weather bumper on-the-fly: %s", weather_path)
+                else:
+                    LOGGER.warning("Failed to render weather bumper, skipping")
+                    # Advance to next entry
+                    next_index += 1
+                    if next_index >= len(files):
+                        next_index = 0
+                    continue
+
+            # Record playhead when we START streaming a file (not just when it finishes)
+            # This ensures the playhead always reflects what's currently playing
+            # Only record if it wasn't updated externally (to avoid overwriting skip commands)
+            # Skip recording for weather bumpers (they're temporary files)
+            if not playhead_updated_externally and not is_weather_bumper(src):
                 record_playhead(src, next_index, playlist_mtime)
+                LOGGER.info("Recorded playhead at stream start: %s (index %d)", src, next_index)
 
             # Stream the file and only mark as watched if streaming succeeded
             # Pass index and mtime so stream_file can detect if skip was triggered
@@ -708,22 +872,50 @@ def run_stream():
                 break
 
             # Advance to next index after successful streaming
-            # This ensures we don't replay the same file
+            # CRITICAL: Use the current next_index and increment it, don't search for last_played
+            # This prevents loops when the playlist changes or files are missing
             if streaming_succeeded and not stream_was_skipped:
-                # Optimize: only search if we need to find the next position
-                # If playlist didn't change, just increment
-                if next_index < len(files) and files[next_index] == last_played:
-                    next_index += 1
-                else:
-                    try:
-                        next_index = files.index(last_played) + 1
-                    except ValueError:
-                        next_index = 0
-
+                # Simply increment next_index - it already points to the file we just streamed
+                # So the next file is at next_index + 1
+                next_index += 1
+                
                 # Wrap around if we've reached the end
                 if next_index >= len(files):
                     next_index = 0
+                    LOGGER.info("Reached end of playlist, wrapping to beginning")
+                
+                # Update playhead to point to the next file after successful streaming
+                # This ensures the playhead reflects the actual playback position
+                # CRITICAL: Always update playhead after successful streaming to prevent loops
+                # Use force=True to ensure the playhead is updated even if it was recently updated externally
+                if next_index < len(files):
+                    next_src = files[next_index]
+                    # Skip recording for weather bumpers (they're temporary files)
+                    if not is_weather_bumper(next_src):
+                        record_playhead(next_src, next_index, playlist_mtime, force=True)
+                        LOGGER.info("Updated playhead to next file after successful stream: %s (index %d)", next_src, next_index)
+                else:
+                    LOGGER.warning("next_index %d is out of bounds for playlist with %d files", next_index, len(files))
+            elif not streaming_succeeded and not stream_was_skipped:
+                # If streaming failed, skip to next file to prevent infinite loops
+                # We'll try again on the next playlist cycle if the file becomes available
+                LOGGER.warning("Streaming failed for %s, skipping to next file", src)
+                next_index += 1
+                if next_index >= len(files):
+                    next_index = 0
+                # Update playhead to next file to prevent retrying the failed file
+                if next_index < len(files):
+                    next_src = files[next_index]
+                    if not is_weather_bumper(next_src):
+                        record_playhead(next_src, next_index, playlist_mtime, force=True)
+                        LOGGER.info("Updated playhead to next file after stream failure: %s (index %d)", next_src, next_index)
 
 
 if __name__ == "__main__":
+    # Configure logging to ensure messages are visible
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
     run_stream()

@@ -246,6 +246,12 @@ def is_network_bumper(entry: str) -> bool:
     return "/bumpers/network/" in token
 
 
+def is_weather_bumper(entry: str) -> bool:
+    """Check if an entry is a weather bumper marker."""
+    token = _normalize_token(entry)
+    return token == "weather_bumper" or "/bumpers/weather/" in token
+
+
 def entry_type(entry: str) -> str:
     token = _normalize_token(entry)
     if is_up_next_bumper(entry):
@@ -254,6 +260,8 @@ def entry_type(entry: str) -> str:
         return "sassy"
     if is_network_bumper(entry):
         return "network"
+    if is_weather_bumper(entry):
+        return "weather"
     if token.endswith(VIDEO_EXTENSIONS):
         return "episode"
     return "other"
@@ -284,6 +292,8 @@ def build_playlist_segments(entries: Sequence[str]) -> List[Dict[str, Any]]:
             start = idx - 1
 
         end = idx + 1
+        if end < total and is_weather_bumper(entries[end]):
+            end += 1
         if end < total and is_sassy_card(entries[end]):
             end += 1
         if end < total and is_network_bumper(entries[end]):

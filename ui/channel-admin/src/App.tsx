@@ -169,6 +169,37 @@ function App() {
     setDirty(false);
   };
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts when typing in inputs, textareas, or contenteditable elements
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+
+      // Ctrl+S or Cmd+S to save
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        if (dirty && currentChannel && !saving) {
+          handleSave();
+        }
+      }
+
+      // Escape to discard
+      if (e.key === "Escape" && dirty && !saving) {
+        handleDiscard();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirty, currentChannel, saving]);
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -204,12 +235,25 @@ function App() {
       </header>
       <main className="app-content">
         {error && (
-          <div className="card error-message">
-            <strong>Error:</strong> {error}
+          <div className="card error-message" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
+            <div style={{ flex: 1 }}>
+              <strong>Error:</strong> {error}
+            </div>
+            <button
+              className="btn btn-secondary"
+              onClick={() => setError(null)}
+              style={{ padding: "0.25rem 0.5rem", fontSize: "0.875rem" }}
+              aria-label="Dismiss error"
+            >
+              ✕
+            </button>
           </div>
         )}
         {!error && loading && (
-          <div className="card loading-message">Loading channel…</div>
+          <div className="card loading-message">
+            <div className="loading-spinner"></div>
+            <span>Loading channel…</span>
+          </div>
         )}
         {!loading && currentChannel && activeView === "settings" && (
           <>

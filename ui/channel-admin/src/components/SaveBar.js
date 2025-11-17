@@ -1,0 +1,5 @@
+import { jsx as _jsx, Fragment as _Fragment, jsxs as _jsxs } from "react/jsx-runtime";
+function SaveBar({ dirty, saving, disabled, status, onSave, onDiscard }) {
+    return (_jsxs("div", { className: "save-bar", children: [_jsxs("div", { className: "status-message", "aria-live": "polite", children: [saving && (_jsxs(_Fragment, { children: [_jsx("div", { className: "loading-spinner", style: { display: "inline-block", marginRight: "0.5rem" } }), _jsx("span", { children: "Restarting media server\u2026" })] })), !saving && dirty && (_jsxs(_Fragment, { children: [_jsx("span", { children: "Saving will restart the media server." }), _jsx("small", { style: { display: "block", marginTop: "0.25rem", opacity: 0.8 }, children: "Press Ctrl+S to save, Esc to discard" })] })), !saving && !dirty && (status || "No changes")] }), _jsxs("div", { className: "save-bar-actions", children: [_jsx("button", { className: "btn btn-secondary", onClick: onDiscard, disabled: !dirty || saving, children: "Discard" }), _jsx("button", { className: "btn btn-primary", onClick: onSave, disabled: disabled || saving, children: saving ? "Restarting…" : "Save" })] })] }));
+}
+export default SaveBar;

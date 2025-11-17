@@ -232,7 +232,19 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
           </button>
         </div>
       </header>
-      {error && <div className="playlist-error">⚠️ {error}</div>}
+      {error && (
+        <div className="playlist-error" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "1rem" }}>
+          <span>⚠️ {error}</span>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setError(null)}
+            style={{ padding: "0.25rem 0.5rem", fontSize: "0.875rem", flexShrink: 0 }}
+            aria-label="Dismiss error"
+          >
+            ✕
+          </button>
+        </div>
+      )}
       {status && <div className="playlist-status">{status}</div>}
       {!channelId && <div>Please select a channel to manage its playlist.</div>}
       {channelId && (
@@ -253,7 +265,12 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
                 ⏳ {status}
               </div>
             )}
-            {!snapshot && loading && <p>Loading current item…</p>}
+            {!snapshot && loading && (
+              <div className="loading-message">
+                <div className="loading-spinner"></div>
+                <span>Loading current item…</span>
+              </div>
+            )}
             {snapshot && snapshot.current ? (
               <div>
                 <div className="playlist-row-title">{formatEpisodeTitle(snapshot.current.detail)}</div>
@@ -268,7 +285,12 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
               <h3>Upcoming ({draft.length})</h3>
               {summary && <small>{summary}</small>}
             </div>
-            {loading && !snapshot && <p>Loading playlist…</p>}
+            {loading && !snapshot && (
+              <div className="loading-message">
+                <div className="loading-spinner"></div>
+                <span>Loading playlist…</span>
+              </div>
+            )}
             {!loading && !hasDraft && (
               <p>No controllable items were found in the upcoming window.</p>
             )}

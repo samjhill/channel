@@ -11,8 +11,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple
 
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFont
@@ -164,6 +165,18 @@ def ease_out_cubic(x: float) -> float:
     return 1 - pow(1 - x, 3)
 
 
+def ease_in_out_cubic(x: float) -> float:
+    x = clamp(x)
+    if x < 0.5:
+        return 4 * x * x * x
+    return 1 - pow(-2 * x + 2, 3) / 2
+
+
+def ease_in_cubic(x: float) -> float:
+    x = clamp(x)
+    return x * x * x
+
+
 def lerp(a: float, b: float, t: float) -> float:
     return a + (b - a) * t
 
@@ -214,6 +227,252 @@ FONT_CANDIDATES_REGULAR = [
 ]
 
 
+def parse_svg_elements(svg_path: Path) -> Tuple[ET.Element, List[Tuple[str, ET.Element]]]:
+    """
+    Parse SVG and return root element and list of animatable elements with their identifiers.
+    Returns: (root_element, [(element_id, element), ...])
+    
+    Animation order:
+    0. Large faded background HBN text
+    1. Main HBN logo (in <g> with filter)
+    2. Subheading "HILLSIDE BROADCASTING NETWORK"
+    3. Call sign "W-HBN NEWARK · EST. 2025"
+    4. Bottom accent line
+    """
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    
+    elements_to_animate = []
+    rect_count = 0
+    text_count = 0
+    line_count = 0
+    g_count = 0
+    
+    # Iterate through direct children and their children to find elements in order
+    for elem in root:
+        tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        
+        # Skip defs
+        if tag == 'defs':
+            continue
+            
+        # Background rects (always visible, skip)
+        if tag == 'rect':
+            rect_count += 1
+            continue
+            
+        # Large faded background HBN text (first text element)
+        if tag == 'text' and text_count == 0:
+            elements_to_animate.append(("bg_text", elem))
+            text_count += 1
+            continue
+            
+        # Main HBN logo in <g> with filter
+        if tag == 'g':
+            elements_to_animate.append(("main_logo", elem))
+            g_count += 1
+            continue
+            
+        # Subheading text
+        if tag == 'text' and text_count == 1:
+            elements_to_animate.append(("subheading", elem))
+            text_count += 1
+            continue
+            
+        # Call sign text
+        if tag == 'text' and text_count == 2:
+            elements_to_animate.append(("callsign", elem))
+            text_count += 1
+            continue
+            
+        # Bottom accent line
+        if tag == 'line':
+            elements_to_animate.append(("accent_line", elem))
+            line_count += 1
+            continue
+    
+    return root, elements_to_animate
+
+
+def create_animated_svg(
+    svg_path: Path,
+    element_opacities: List[float],
+    output_path: Path,
+    width: int,
+    height: int,
+) -> None:
+    """
+    Create an animated SVG frame with specified opacities for each element.
+    element_opacities should match the order returned by parse_svg_elements.
+    """
+    tree = ET.parse(svg_path)
+    root = tree.getroot()
+    
+    # Set viewBox and dimensions
+    root.set('width', str(width))
+    root.set('height', str(height))
+    root.set('viewBox', f"0 0 {width} {height}")
+    
+    # Track which element we're animating (same logic as parse_svg_elements)
+    opacity_index = 0
+    text_count = 0
+    line_count = 0
+    g_count = 0
+    
+    # Iterate through direct children
+    for elem in root:
+        tag = elem.tag.split('}')[-1] if '}' in elem.tag else elem.tag
+        
+        # Skip defs
+        if tag == 'defs':
+            continue
+            
+        # Background rects (always visible, skip)
+        if tag == 'rect':
+            continue
+            
+        # Large faded background HBN text (first text element)
+        if tag == 'text' and text_count == 0:
+            if opacity_index < len(element_opacities):
+                opacity = element_opacities[opacity_index]
+                existing_opacity = elem.get('opacity', '1.0')
+                try:
+                    existing_opacity = float(existing_opacity)
+                except ValueError:
+                    existing_opacity = 1.0
+                final_opacity = existing_opacity * opacity
+                elem.set('opacity', str(final_opacity))
+                opacity_index += 1
+            text_count += 1
+            continue
+            
+        # Main HBN logo in <g> with filter
+        if tag == 'g':
+            if opacity_index < len(element_opacities):
+                opacity = element_opacities[opacity_index]
+                existing_opacity = elem.get('opacity', '1.0')
+                try:
+                    existing_opacity = float(existing_opacity)
+                except ValueError:
+                    existing_opacity = 1.0
+                final_opacity = existing_opacity * opacity
+                elem.set('opacity', str(final_opacity))
+                opacity_index += 1
+            g_count += 1
+            continue
+            
+        # Subheading text
+        if tag == 'text' and text_count == 1:
+            if opacity_index < len(element_opacities):
+                opacity = element_opacities[opacity_index]
+                existing_opacity = elem.get('opacity', '1.0')
+                try:
+                    existing_opacity = float(existing_opacity)
+                except ValueError:
+                    existing_opacity = 1.0
+                final_opacity = existing_opacity * opacity
+                elem.set('opacity', str(final_opacity))
+                opacity_index += 1
+            text_count += 1
+            continue
+            
+        # Call sign text
+        if tag == 'text' and text_count == 2:
+            if opacity_index < len(element_opacities):
+                opacity = element_opacities[opacity_index]
+                existing_opacity = elem.get('opacity', '1.0')
+                try:
+                    existing_opacity = float(existing_opacity)
+                except ValueError:
+                    existing_opacity = 1.0
+                final_opacity = existing_opacity * opacity
+                elem.set('opacity', str(final_opacity))
+                opacity_index += 1
+            text_count += 1
+            continue
+            
+        # Bottom accent line
+        if tag == 'line':
+            if opacity_index < len(element_opacities):
+                opacity = element_opacities[opacity_index]
+                existing_opacity = elem.get('opacity', '1.0')
+                try:
+                    existing_opacity = float(existing_opacity)
+                except ValueError:
+                    existing_opacity = 1.0
+                final_opacity = existing_opacity * opacity
+                elem.set('opacity', str(final_opacity))
+                opacity_index += 1
+            line_count += 1
+            continue
+    
+    # Write the modified SVG with proper namespace handling
+    ET.register_namespace('', 'http://www.w3.org/2000/svg')
+    tree.write(output_path, encoding='utf-8', xml_declaration=True)
+
+
+def render_svg_to_png(
+    svg_path: Path, output_path: Path, width: int, height: int
+) -> bool:
+    """
+    Render SVG to PNG using available tools.
+    """
+    # Try rsvg-convert (librsvg) - best quality
+    if shutil.which("rsvg-convert"):
+        try:
+            subprocess.run(
+                [
+                    "rsvg-convert",
+                    "-w",
+                    str(width),
+                    "-h",
+                    str(height),
+                    "-o",
+                    str(output_path),
+                    str(svg_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    # Try cairosvg (Python package)
+    try:
+        import cairosvg
+        cairosvg.svg2png(
+            url=str(svg_path),
+            write_to=str(output_path),
+            output_width=width,
+            output_height=height,
+        )
+        return True
+    except (ImportError, Exception):
+        pass
+
+    # Try inkscape
+    if shutil.which("inkscape"):
+        try:
+            subprocess.run(
+                [
+                    "inkscape",
+                    "--export-type=png",
+                    f"--export-filename={output_path}",
+                    f"--export-width={width}",
+                    f"--export-height={height}",
+                    str(svg_path),
+                ],
+                check=True,
+                capture_output=True,
+            )
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+
+    return False
+
+
 def render_network_brand_bumper(
     output_path: str,
     width: int = 1600,
@@ -226,6 +485,7 @@ def render_network_brand_bumper(
 ) -> None:
     """
     Render a network branding bumper with the full HBN logo.
+    Uses SVG directly and animates each element separately for a professional look.
     """
     if not shutil.which("ffmpeg"):
         raise RuntimeError("ffmpeg is required but not found in PATH")
@@ -240,106 +500,102 @@ def render_network_brand_bumper(
     else:
         logo_svg_path = Path(logo_svg_path)
 
+    if not logo_svg_path.exists():
+        raise RuntimeError(f"Logo SVG not found at {logo_svg_path}")
+
     if seed is None:
         seed = secrets.randbits(32)
     rng = np.random.default_rng(seed)
 
-    # Prepare full logo
+    # Parse SVG to understand structure
+    try:
+        root, elements = parse_svg_elements(logo_svg_path)
+        num_elements = len(elements)
+        if num_elements == 0:
+            raise RuntimeError("No animatable elements found in SVG")
+    except Exception as e:
+        raise RuntimeError(f"Failed to parse SVG: {e}") from e
+
+    num_frames = int(duration_sec * fps)
+    if num_frames == 0:
+        raise RuntimeError(
+            f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})"
+        )
+
+    # Animation timing parameters (in seconds)
+    animation_start = 0.3
+    element_fade_duration = 0.8  # Duration for each element to fade in
+    element_stagger = 0.15  # Delay between each element starting
+    fade_out_start = duration_sec - 1.8
+    fade_out_duration = 1.8
+
     with tempfile.TemporaryDirectory() as tmpdir:
-        logo_png_tmp = Path(tmpdir) / "logo_full.png"
-        logo_png = ensure_logo_png(logo_svg_path, logo_png_tmp, size=max(width, height))
-        if not logo_png or not logo_png.exists():
-            raise RuntimeError(f"Could not convert or find logo at {logo_svg_path}")
-
-        try:
-            base_logo = Image.open(logo_png).convert("RGBA")
-            # Validate logo is not empty
-            if base_logo.size[0] == 0 or base_logo.size[1] == 0:
-                raise RuntimeError(f"Logo image has zero dimensions: {logo_png}")
-            # Check if logo has any visible content (not completely transparent)
-            # For RGBA images, check if alpha channel has any non-zero values
-            if base_logo.mode == "RGBA":
-                alpha_extrema = base_logo.getextrema()[3]
-                if alpha_extrema == (0, 0):  # Alpha channel is all 0
-                    raise RuntimeError(
-                        f"Logo image is completely transparent: {logo_png}"
-                    )
-            # Check if RGB channels have any non-zero content (in case of RGB image)
-            rgb_extrema = base_logo.getextrema()[:3]
-            if all(ext == (0, 0) for ext in rgb_extrema):
-                raise RuntimeError(f"Logo image appears to be all black: {logo_png}")
-        except Exception as e:
-            raise RuntimeError(f"Failed to load logo from {logo_png}: {e}") from e
-
-        num_frames = int(duration_sec * fps)
-        if num_frames == 0:
-            raise RuntimeError(
-                f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})"
-            )
-
-        # Animation parameters
-        logo_start = 0.2
-        logo_fade_duration = 1.0
-        logo_scale_anim_duration = 1.5
-        fade_out_start = duration_sec - 1.5
-        fade_out_duration = 1.5
-
+        tmpdir_path = Path(tmpdir)
+        
         # Generate frames
         frames_generated = 0
         for idx in range(num_frames):
             t = idx / fps
 
-            # Start with the logo image as base (it already has the background and all text)
-            frame = base_logo.copy().convert("RGBA")
+            # Calculate opacity for each element
+            element_opacities = []
+            for i in range(num_elements):
+                element_start = animation_start + (i * element_stagger)
+                element_end = element_start + element_fade_duration
+                
+                if t < element_start:
+                    # Not started yet
+                    opacity = 0.0
+                elif t < element_end:
+                    # Fading in
+                    progress = (t - element_start) / element_fade_duration
+                    # Use ease-out for smooth fade-in
+                    opacity = ease_out_cubic(progress)
+                elif t < fade_out_start:
+                    # Fully visible
+                    opacity = 1.0
+                else:
+                    # Fading out
+                    fade_progress = (t - fade_out_start) / fade_out_duration
+                    fade_alpha = 1.0 - clamp(fade_progress)
+                    opacity = fade_alpha
+                
+                element_opacities.append(opacity)
 
-            # Add subtle grain for texture
-            frame = add_grain(frame, opacity=0.12, rng=rng)
-
-            # Logo animation - fade in and scale
-            logo_progress = clamp((t - logo_start) / logo_fade_duration)
-            logo_alpha = ease_out_cubic(logo_progress)
-            logo_scale_progress = clamp((t - logo_start) / logo_scale_anim_duration)
-            logo_scale = lerp(0.92, 1.0, ease_out_cubic(logo_scale_progress))
-
-            # Always create a canvas of the target dimensions and center the logo
-            # Scale and apply alpha
-            new_size = (int(frame.width * logo_scale), int(frame.height * logo_scale))
-            scaled_frame = frame.resize(new_size, Image.LANCZOS)
-
-            # Create centered canvas
-            logo_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
-            logo_x = (width - scaled_frame.width) // 2
-            logo_y = (height - scaled_frame.height) // 2
-
-            # Apply alpha
-            alpha_mask = scaled_frame.getchannel("A").point(
-                lambda a: int(a * logo_alpha)
+            # Create animated SVG frame
+            animated_svg = tmpdir_path / f"frame_{idx:04d}.svg"
+            create_animated_svg(
+                logo_svg_path,
+                element_opacities,
+                animated_svg,
+                width,
+                height,
             )
-            scaled_frame.putalpha(alpha_mask)
 
-            logo_layer.paste(scaled_frame, (logo_x, logo_y), scaled_frame)
-            frame = logo_layer
+            # Render SVG to PNG
+            frame_png = tmpdir_path / f"frame_{idx:04d}.png"
+            if not render_svg_to_png(animated_svg, frame_png, width, height):
+                raise RuntimeError(
+                    f"Failed to render SVG frame {idx}. "
+                    "Ensure rsvg-convert, cairosvg, or inkscape is available."
+                )
 
-            # Fade out
-            fade_progress = (
-                clamp((t - fade_out_start) / fade_out_duration)
-                if t >= fade_out_start
-                else 0.0
-            )
-            if fade_progress > 0:
-                fade_alpha = int(255 * fade_progress)
-                black_layer = Image.new("RGBA", frame.size, (0, 0, 0, fade_alpha))
-                frame = Image.alpha_composite(frame, black_layer)
+            # Load the rendered frame and add grain for texture
+            try:
+                frame = Image.open(frame_png).convert("RGBA")
+                frame = add_grain(frame, opacity=0.10, rng=rng)
+                
+                # Save final frame
+                frame.convert("RGB").save(frame_png, "PNG")
+                frames_generated += 1
 
-            frame_path = Path(tmpdir) / f"frame_{idx:04d}.png"
-            frame.convert("RGB").save(frame_path, "PNG")
-            frames_generated += 1
-
-            # Validate frame is not all black (unless it's during fade out)
-            if t < fade_out_start:
-                extrema = frame.getextrema()
-                if extrema == ((0, 0), (0, 0), (0, 0)):
-                    raise RuntimeError(f"Frame {idx} is all black (time={t:.2f}s)")
+                # Validate frame is not all black (unless it's during fade out)
+                if t < fade_out_start:
+                    extrema = frame.getextrema()
+                    if extrema == ((0, 0), (0, 0), (0, 0)):
+                        raise RuntimeError(f"Frame {idx} is all black (time={t:.2f}s)")
+            except Exception as e:
+                raise RuntimeError(f"Failed to process frame {idx}: {e}") from e
 
         # Validate all frames were generated
         if frames_generated != num_frames:
@@ -348,18 +604,18 @@ def render_network_brand_bumper(
             )
 
         # Validate frame sequence
-        if not validate_frame_sequence(Path(tmpdir), num_frames, "frame_%04d.png"):
+        if not validate_frame_sequence(tmpdir_path, num_frames, "frame_%04d.png"):
             raise RuntimeError("Frame sequence validation failed")
 
         # Render video
-        silent_video = Path(tmpdir) / "silent_bumper.mp4"
+        silent_video = tmpdir_path / "silent_bumper.mp4"
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",
             "-framerate",
             str(fps),
             "-i",
-            str(Path(tmpdir) / "frame_%04d.png"),
+            str(tmpdir_path / "frame_%04d.png"),
             "-c:v",
             "libx264",
             "-preset",

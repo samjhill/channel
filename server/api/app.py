@@ -531,6 +531,17 @@ class SassyConfigUpdate(BaseModel):
     messages: Optional[List[str]] = None
 
 
+class WeatherConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    location: Optional[Dict[str, Any]] = None
+    units: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    cache_ttl_minutes: Optional[float] = None
+    probability_between_episodes: Optional[float] = None
+    music_volume: Optional[float] = None
+    api_key: Optional[str] = None  # Special field for setting API key via UI
+
+
 @app.get("/api/bumpers/sassy")
 def get_sassy_config() -> Dict[str, Any]:
     """Get the current sassy messages configuration."""
@@ -579,6 +590,96 @@ def update_sassy_config(update: SassyConfigUpdate) -> Dict[str, Any]:
         return current_config
     except Exception as e:
         LOGGER.error("Failed to update sassy config: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
+
+
+@app.get("/api/bumpers/weather")
+def get_weather_config() -> Dict[str, Any]:
+    """Get the current weather bumper configuration."""
+    try:
+        from server.services.weather_service import load_weather_config
+        
+        config = load_weather_config()
+        # Don't expose the API key if it's set via env var
+        # Only show if it's stored in config (though we prefer env vars)
+        if "api_key" in config:
+            # Mask the API key for security
+            api_key = config.get("api_key", "")
+            if api_key and len(api_key) > 8:
+                config["api_key"] = api_key[:4] + "..." + api_key[-4:]
+        else:
+            # Check if API key is set in environment
+            api_var = config.get("api_key_env_var", "HBN_WEATHER_API_KEY")
+            import os
+            api_key = os.getenv(api_var)
+            if api_key:
+                config["api_key_set"] = True
+                config["api_key"] = None  # Don't expose the actual key
+            else:
+                config["api_key_set"] = False
+                config["api_key"] = None
+        
+        return config
+    except Exception as e:
+        LOGGER.error("Failed to load weather config: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to load config: {str(e)}")
+
+
+@app.put("/api/bumpers/weather")
+def update_weather_config(update: WeatherConfigUpdate) -> Dict[str, Any]:
+    """Update the weather bumper configuration."""
+    try:
+        from server.services.weather_service import load_weather_config, CONFIG_PATH
+        import os
+        
+        # Load current config
+        current_config = load_weather_config()
+        
+        # Apply updates
+        if update.enabled is not None:
+            current_config["enabled"] = update.enabled
+        if update.location is not None:
+            current_config["location"] = {**current_config.get("location", {}), **update.location}
+        if update.units is not None:
+            if update.units in ["imperial", "metric"]:
+                current_config["units"] = update.units
+        if update.duration_seconds is not None:
+            current_config["duration_seconds"] = max(1.0, min(30.0, update.duration_seconds))
+        if update.cache_ttl_minutes is not None:
+            current_config["cache_ttl_minutes"] = max(1.0, min(60.0, update.cache_ttl_minutes))
+        if update.probability_between_episodes is not None:
+            current_config["probability_between_episodes"] = max(
+                0.0, min(1.0, update.probability_between_episodes)
+            )
+        if update.music_volume is not None:
+            current_config["music_volume"] = max(0.0, min(1.0, update.music_volume))
+        
+        # Handle API key specially - set as environment variable
+        if update.api_key is not None and update.api_key.strip():
+            api_key = update.api_key.strip()
+            api_var = current_config.get("api_key_env_var", "HBN_WEATHER_API_KEY")
+            # Set environment variable (will persist for current process, but user should set in Docker/system env)
+            os.environ[api_var] = api_key
+            LOGGER.info("API key set via UI (for current process). For persistence, set %s as environment variable.", api_var)
+            # Note: This won't persist across restarts unless set in Docker/system config
+        
+        # Ensure config directory exists
+        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write updated config (without API key - it should be in env var)
+        config_to_save = {**current_config}
+        if "api_key" in config_to_save:
+            del config_to_save["api_key"]  # Don't save API key in config file
+        
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(config_to_save, f, indent=2, ensure_ascii=False)
+        
+        LOGGER.info("Updated weather config at %s", CONFIG_PATH)
+        
+        # Return updated config (without exposing API key)
+        return get_weather_config()
+    except Exception as e:
+        LOGGER.error("Failed to update weather config: %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
 
 
