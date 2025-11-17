@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import subprocess
@@ -55,7 +56,8 @@ except ImportError:
         _normalize_path = None
 
 PLAYLIST = str(resolve_playlist_path())
-OUTPUT = "/app/hls/stream.m3u8"
+HLS_DIR = Path("/app/hls")
+OUTPUT = str(HLS_DIR / "stream.m3u8")
 DEFAULT_ASSETS_ROOT = "/app/assets"
 DEFAULT_BUG_IMAGE = "branding/hbn_logo_bug.png"
 
@@ -147,12 +149,9 @@ def _resolve_bumper_block(current_index: int, files: List[str]) -> Optional[Any]
         generator = get_generator()
         
         # Determine what bumpers should be in this block
-        # Look ahead to find the next episode
+        # Look ahead to find the next episode (skip all marker entries)
         next_episode_index = current_index + 1
-        while next_episode_index < len(files) and (
-            is_bumper_block(files[next_episode_index]) or 
-            is_weather_bumper(files[next_episode_index])
-        ):
+        while next_episode_index < len(files) and not is_episode_entry(files[next_episode_index]):
             next_episode_index += 1
         
         up_next_bumper = None
@@ -249,10 +248,7 @@ def _queue_next_bumper_block(current_index: int, files: List[str]) -> None:
         
         # Look ahead to find episode after the next bumper block
         episode_after_block = next_episode_index + 1
-        while episode_after_block < len(files) and (
-            is_bumper_block(files[episode_after_block]) or 
-            is_weather_bumper(files[episode_after_block])
-        ):
+        while episode_after_block < len(files) and not is_episode_entry(files[episode_after_block]):
             episode_after_block += 1
         
         if episode_after_block >= len(files):
@@ -308,6 +304,23 @@ def load_playlist():
 def format_number(value: float) -> str:
     text = f"{value:.4f}".rstrip("0").rstrip(".")
     return text or "0"
+
+
+def reset_hls_output(reason: str = "") -> None:
+    """Remove old HLS segments so clients can't loop stale content."""
+    try:
+        if HLS_DIR.exists():
+            for ts_file in HLS_DIR.glob("stream*.ts"):
+                with contextlib.suppress(OSError):
+                    ts_file.unlink()
+        with open(OUTPUT, "w", encoding="utf-8") as playlist:
+            playlist.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n")
+        if reason:
+            LOGGER.info("Reset HLS output (%s)", reason)
+        else:
+            LOGGER.info("Reset HLS output")
+    except Exception as exc:
+        LOGGER.warning("Failed to reset HLS output: %s", exc)
 
 
 def overlay_position_expr(position: str, margin: int) -> tuple[str, str]:
@@ -425,21 +438,11 @@ def stream_file(
         return False
 
     LOGGER.info("Streaming: %s (index %d)", src, expected_index)
-    
-    # CRITICAL: When switching files, we need to ensure clients get fresh content
-    # Check if we're switching to a different file (not continuing the same one)
-    is_file_switch = True
-    try:
-        if os.path.exists(OUTPUT):
-            # Read last few lines of playlist to see what was last streamed
-            with open(OUTPUT, 'r') as f:
-                lines = f.readlines()
-                # If playlist has segments, we're switching files
-                if any('stream' in line and '.ts' in line for line in lines[-20:]):
-                    is_file_switch = True
-    except Exception:
-        pass
-    
+
+    current_entry_type = entry_type(src)
+    if current_entry_type == "episode":
+        reset_hls_output(reason=f"episode:{Path(src).name}")
+
     video_height = probe_video_height(src)
     overlay_args, has_overlay = build_overlay_args(video_height)
     cmd = [
@@ -625,6 +628,10 @@ def record_playhead(src: str, index: int, playlist_mtime: float, force: bool = F
         playlist_mtime: Playlist modification time
         force: If True, always update even if recently updated externally (for post-stream updates)
     """
+    # Only record real episodes - skip standalone bumpers/markers
+    if entry_type(src) != "episode":
+        LOGGER.debug("Skipping playhead record for non-episode entry: %s", src)
+        return
     # Check if playhead was recently updated externally (within last 2 seconds)
     # Only skip if it points to a different file (skip command), not if it's the same (normal playback)
     # Unless force=True, which allows updates after successful streaming
@@ -1004,23 +1011,39 @@ def run_stream():
                     # Pre-generate next bumper block while we're streaming
                     _queue_next_bumper_block(next_index, files)
                     
-                    # Advance to next entry after block
+                    # Advance to the next real episode after the block
                     next_index += 1
+                    while next_index < len(files) and not is_episode_entry(files[next_index]):
+                        LOGGER.debug(
+                            "Skipping non-episode entry after bumper block: %s",
+                            files[next_index],
+                        )
+                        next_index += 1
                     if next_index >= len(files):
                         next_index = 0
+                        while next_index < len(files) and not is_episode_entry(files[next_index]):
+                            LOGGER.debug(
+                                "Wrapping and skipping non-episode entry after bumper block: %s",
+                                files[next_index],
+                            )
+                            next_index += 1
+                            if next_index >= len(files):
+                                break
                     
-                    # Update playhead to the next file (skip past the BUMPER_BLOCK marker)
                     if next_index < len(files):
-                        next_src = files[next_index]
-                        # Skip recording for weather bumpers and bumper blocks (they're temporary/markers)
-                        if not is_weather_bumper(next_src) and not is_bumper_block(next_src):
-                            record_playhead(next_src, next_index, playlist_mtime, force=True)
-                            LOGGER.info("Updated playhead after bumper block: %s (index %d)", next_src, next_index)
+                        record_playhead(files[next_index], next_index, playlist_mtime, force=True)
+                        LOGGER.info(
+                            "Updated playhead after bumper block: %s (index %d)",
+                            files[next_index],
+                            next_index,
+                        )
                     
                     continue
                 else:
                     LOGGER.warning("Failed to resolve bumper block, skipping")
                     next_index += 1
+                    while next_index < len(files) and not is_episode_entry(files[next_index]):
+                        next_index += 1
                     if next_index >= len(files):
                         next_index = 0
                     continue
@@ -1142,41 +1165,44 @@ def run_stream():
             # CRITICAL: Use the current next_index and increment it, don't search for last_played
             # This prevents loops when the playlist changes or files are missing
             if streaming_succeeded and not stream_was_skipped:
-                # Simply increment next_index - it already points to the file we just streamed
-                # So the next file is at next_index + 1
                 next_index += 1
-                
-                # Wrap around if we've reached the end
                 if next_index >= len(files):
                     next_index = 0
                     LOGGER.info("Reached end of playlist, wrapping to beginning")
-                
-                # Update playhead to point to the next file after successful streaming
-                # This ensures the playhead reflects the actual playback position
-                # CRITICAL: Always update playhead after successful streaming to prevent loops
-                # Use force=True to ensure the playhead is updated even if it was recently updated externally
+                while next_index < len(files) and not is_episode_entry(files[next_index]):
+                    LOGGER.debug("Skipping non-episode entry while advancing playlist: %s", files[next_index])
+                    next_index += 1
+                    if next_index >= len(files):
+                        next_index = 0
+                        LOGGER.info("Reached end of playlist while skipping markers, wrapping to beginning")
                 if next_index < len(files):
-                    next_src = files[next_index]
-                    # Skip recording for weather bumpers and bumper blocks (they're temporary/markers)
-                    if not is_weather_bumper(next_src) and not is_bumper_block(next_src):
-                        record_playhead(next_src, next_index, playlist_mtime, force=True)
-                        LOGGER.info("Updated playhead to next file after successful stream: %s (index %d)", next_src, next_index)
+                    record_playhead(files[next_index], next_index, playlist_mtime, force=True)
+                    LOGGER.info(
+                        "Updated playhead to next episode after successful stream: %s (index %d)",
+                        files[next_index],
+                        next_index,
+                    )
                 else:
-                    LOGGER.warning("next_index %d is out of bounds for playlist with %d files", next_index, len(files))
+                    LOGGER.warning("No episode entries found in playlist after successful stream")
             elif not streaming_succeeded and not stream_was_skipped:
-                # If streaming failed, skip to next file to prevent infinite loops
-                # We'll try again on the next playlist cycle if the file becomes available
                 LOGGER.warning("Streaming failed for %s, skipping to next file", src)
                 next_index += 1
                 if next_index >= len(files):
                     next_index = 0
-                # Update playhead to next file to prevent retrying the failed file
+                while next_index < len(files) and not is_episode_entry(files[next_index]):
+                    LOGGER.debug("Skipping non-episode entry after stream failure: %s", files[next_index])
+                    next_index += 1
+                    if next_index >= len(files):
+                        next_index = 0
                 if next_index < len(files):
-                    next_src = files[next_index]
-                    # Skip recording for weather bumpers and bumper blocks (they're temporary/markers)
-                    if not is_weather_bumper(next_src) and not is_bumper_block(next_src):
-                        record_playhead(next_src, next_index, playlist_mtime, force=True)
-                        LOGGER.info("Updated playhead to next file after stream failure: %s (index %d)", next_src, next_index)
+                    record_playhead(files[next_index], next_index, playlist_mtime, force=True)
+                    LOGGER.info(
+                        "Updated playhead to next episode after stream failure: %s (index %d)",
+                        files[next_index],
+                        next_index,
+                    )
+                else:
+                    LOGGER.warning("No episode entries found in playlist after failure")
 
 
 if __name__ == "__main__":
