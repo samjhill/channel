@@ -384,9 +384,10 @@
         });
         
         // Also listen for when fragments are buffered - this can help detect new content
+        // Only seek if we have sufficient buffer
         hls.on(Hls.Events.FRAG_BUFFERED, function (event, data) {
           try {
-            if (discontinuityDetected) {
+            if (discontinuityDetected && !recoveryInProgress) {
               // When a fragment is buffered after discontinuity, check if we need to seek
               const levels = hls.levels;
               if (levels && levels.length > 0) {
@@ -398,10 +399,25 @@
                     const lastFragment = fragments[fragments.length - 1];
                     const liveEdge = lastFragment.start + lastFragment.duration;
                     const currentTime = video.currentTime;
+                    const latency = liveEdge - currentTime;
                     
-                    if (liveEdge - currentTime > 8) {
-                      console.log(`⚠️ Fragment buffered - seeking forward to ${liveEdge.toFixed(1)}s`);
-                      video.currentTime = Math.max(0, liveEdge - 6);
+                    // Check buffer before seeking
+                    const buffered = video.buffered;
+                    let hasBuffer = false;
+                    if (buffered.length > 0) {
+                      for (let i = 0; i < buffered.length; i++) {
+                        if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                          const remaining = buffered.end(i) - currentTime;
+                          hasBuffer = remaining > 5; // Need at least 5 seconds buffer
+                          break;
+                        }
+                      }
+                    }
+                    
+                    // Only seek if we're behind AND have sufficient buffer
+                    if (latency > 10 && hasBuffer) {
+                      console.log(`⚠️ Fragment buffered - seeking forward to ${liveEdge.toFixed(1)}s (${latency.toFixed(1)}s behind)`);
+                      video.currentTime = Math.max(0, liveEdge - 8);
                       video.play().catch(() => {});
                     }
                   }
