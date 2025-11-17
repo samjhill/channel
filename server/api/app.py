@@ -4,6 +4,7 @@ FastAPI application exposing channel configuration management endpoints.
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -11,6 +12,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+LOGGER = logging.getLogger(__name__)
 
 from .media_control import restart_media_server
 from .settings_service import (
@@ -188,9 +191,9 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
             timeout=2,
         )
         if result.returncode == 0:
-            print(f"Skip API: Synced playlist from container to host", flush=True)
+            LOGGER.debug("Synced playlist from container to host")
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
-        print(f"Skip API: Could not sync playlist from container: {e}", flush=True)
+        LOGGER.warning("Could not sync playlist from container: %s", e)
 
     try:
         entries, mtime = load_playlist_entries()
@@ -210,14 +213,14 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
             timeout=2,
         )
         if result.returncode == 0:
-            print(f"Skip API: Synced playhead from container to host", flush=True)
+            LOGGER.debug("Synced playhead from container to host")
         else:
-            print(
-                f"Skip API: Failed to sync from container: {result.stderr.decode()}",
-                flush=True,
+            LOGGER.warning(
+                "Failed to sync playhead from container: %s",
+                result.stderr.decode() if result.stderr else "Unknown error",
             )
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
-        print(f"Skip API: Could not sync from container: {e}", flush=True)
+        LOGGER.warning("Could not sync playhead from container: %s", e)
 
     # Now load the synced playhead state
     state = load_playhead_state(force_reload=True)
@@ -227,10 +230,7 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
     current_path = state.get("current_path")
     current_index = state.get("current_index", -1)
 
-    print(
-        f"Skip API: current_path={current_path}, current_index={current_index}",
-        flush=True,
-    )
+    LOGGER.debug("Skip request - current_path=%s, current_index=%s", current_path, current_index)
 
     # Find the current item in the playlist (using normalized path comparison)
     try:
@@ -268,18 +268,19 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
                     break
 
         if next_index == -1:
-            print(
-                f"Skip API: ERROR - Current episode not found in playlist. current_path={current_path}, playlist_length={len(entries)}",
-                flush=True,
+            LOGGER.error(
+                "Current episode not found in playlist. current_path=%s, playlist_length=%d",
+                current_path,
+                len(entries),
             )
             raise ValueError("Current episode not found in playlist")
         else:
-            print(
-                f"Skip API: Found current episode at index {current_index if current_index >= 0 and current_index < len(entries) and _normalize_path(entries[current_index]) == normalized_current else 'searched'}, calculated next_index={next_index}",
-                flush=True,
+            LOGGER.debug(
+                "Found current episode, calculated next_index=%d",
+                next_index,
             )
     except ValueError as e:
-        print(f"Skip API: ValueError - {e}", flush=True)
+        LOGGER.error("ValueError during skip: %s", e)
         raise HTTPException(
             status_code=400, detail="Current episode not found in playlist"
         ) from None
@@ -287,7 +288,7 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
     # If we're at the end, wrap around
     if next_index >= len(entries):
         next_index = 0
-        print(f"Skip API: Wrapped around to index 0", flush=True)
+        LOGGER.debug("Wrapped around to index 0")
 
     # Update playhead to point to the next item
     next_path = entries[next_index]
@@ -300,10 +301,7 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
     }
     save_playhead_state(new_state)
 
-    print(
-        f"Skip API: Updated playhead to next_path={next_path}, next_index={next_index}",
-        flush=True,
-    )
+    LOGGER.info("Updated playhead to next_path=%s, next_index=%d", next_path, next_index)
 
     # Force sync the playhead file to the container if running in Docker
     # This ensures the streamer sees the update immediately
@@ -320,16 +318,14 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
         )
         if result.returncode == 0:
             sync_success = True
-            print(
-                f"Skip API: Successfully synced playhead to container: {next_path} (index {next_index})",
-                flush=True,
+            LOGGER.info(
+                "Successfully synced playhead to container: %s (index %d)",
+                next_path,
+                next_index,
             )
         else:
             error_msg = result.stderr.decode() if result.stderr else "Unknown error"
-            print(
-                f"Skip API: Failed to sync playhead to container: {error_msg}",
-                flush=True,
-            )
+            LOGGER.error("Failed to sync playhead to container: %s", error_msg)
             raise HTTPException(
                 status_code=500,
                 detail=f"Failed to sync playhead to streamer: {error_msg}",
@@ -339,9 +335,7 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
     except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
         # Docker not available or copy failed
         error_msg = str(e)
-        print(
-            f"Skip API: Could not sync playhead to container: {error_msg}", flush=True
-        )
+        LOGGER.error("Could not sync playhead to container: %s", error_msg)
         raise HTTPException(
             status_code=500, detail=f"Failed to sync playhead to streamer: {error_msg}"
         )
@@ -364,9 +358,10 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
         normalized_current = current_path
         normalized_next = next_path
 
-    print(
-        f"Skip API: Waiting for streamer to jump from {current_path} to {next_path}...",
-        flush=True,
+    LOGGER.debug(
+        "Waiting for streamer to jump from %s to %s...",
+        current_path,
+        next_path,
     )
 
     while (time.time() - start_time) < max_wait_time:
@@ -417,9 +412,11 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
                 if paths_match_target and recently_updated:
                     skip_confirmed = True
                     elapsed = time.time() - start_time
-                    print(
-                        f"Skip API: Skip confirmed! Streamer jumped to {next_path} (took {elapsed:.2f}s, updated {current_time - container_updated_at:.2f}s ago)",
-                        flush=True,
+                    LOGGER.info(
+                        "Skip confirmed! Streamer jumped to %s (took %.2fs, updated %.2fs ago)",
+                        next_path,
+                        elapsed,
+                        current_time - container_updated_at,
                     )
                     break
                 elif path_changed_from_original and recently_updated:
@@ -427,19 +424,21 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
                     # This is sufficient confirmation - streamer detected the skip
                     skip_confirmed = True
                     elapsed = time.time() - start_time
-                    print(
-                        f"Skip API: Skip confirmed! Streamer jumped to {container_path} (took {elapsed:.2f}s, different from original, updated {current_time - container_updated_at:.2f}s ago)",
-                        flush=True,
+                    LOGGER.info(
+                        "Skip confirmed! Streamer jumped to %s (took %.2fs, different from original, updated %.2fs ago)",
+                        container_path,
+                        elapsed,
+                        current_time - container_updated_at,
                     )
                     break
         except Exception as e:
-            print(f"Skip API: Error checking container playhead: {e}", flush=True)
+            LOGGER.error("Error checking container playhead: %s", e)
 
         time.sleep(poll_interval)
 
     if not skip_confirmed:
         error_msg = f"Skip command sent but streamer did not jump within {max_wait_time} seconds. Current playhead may still be at {current_path}"
-        print(f"Skip API: {error_msg}", flush=True)
+        LOGGER.error("Skip timeout: %s", error_msg)
         raise HTTPException(status_code=504, detail=error_msg)
 
     # Return updated snapshot

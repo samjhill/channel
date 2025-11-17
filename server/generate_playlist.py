@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import logging
 import os
 import random
 import re
@@ -8,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+LOGGER = logging.getLogger(__name__)
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
@@ -188,10 +191,7 @@ def _render_bumper_safe(
         return (bumper_path, None)
     except Exception as exc:
         error_msg = str(exc)
-        print(
-            f"[Bumpers] Failed to render bumper for {show_title!r}: {error_msg}",
-            flush=True,
-        )
+        LOGGER.error("Failed to render bumper for %r: %s", show_title, error_msg)
         return (None, error_msg)
 
 
@@ -215,10 +215,7 @@ def ensure_bumper(
     generic_filename = f"{base_name}.mp4"
     generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
     if not os.path.exists(generic_bumper_path):
-        print(
-            f"[Bumpers] Rendering generic 'Up Next' bumper for {show_title!r}",
-            flush=True,
-        )
+        LOGGER.info("Rendering generic 'Up Next' bumper for %r", show_title)
         render_up_next_bumper(
             show_title=show_title,
             output_path=generic_bumper_path,
@@ -234,9 +231,10 @@ def ensure_bumper(
         if not os.path.exists(specific_bumper_path):
             # Only create specific bumper if generic exists
             if os.path.exists(generic_bumper_path):
-                print(
-                    f"[Bumpers] Rendering specific 'Up Next' bumper for {show_title!r} - {episode_code}",
-                    flush=True,
+                LOGGER.info(
+                    "Rendering specific 'Up Next' bumper for %r - %s",
+                    show_title,
+                    episode_code,
                 )
                 render_up_next_bumper(
                     show_title=show_title,
@@ -246,9 +244,8 @@ def ensure_bumper(
                 )
             else:
                 # Generic doesn't exist yet (shouldn't happen, but fallback)
-                print(
-                    f"[Bumpers] Generic bumper not found, using generic for {show_title!r}",
-                    flush=True,
+                LOGGER.warning(
+                    "Generic bumper not found, using generic for %r", show_title
                 )
                 return generic_bumper_path
 
@@ -434,7 +431,7 @@ class SassyCardManager:
                         message=message,
                     )
                 except Exception as exc:  # pragma: no cover - best effort
-                    print(f"[Sassy] Failed to render card for '{message[:30]}': {exc}")
+                    LOGGER.error("Failed to render sassy card for '%s': %s", message[:30], exc)
             if os.path.exists(destination):
                 cards.append(destination)
 
@@ -811,20 +808,27 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
     seed_announced = False
 
     # Find the last watched episode and resume from the next one
+    # Validate that the episode still exists before using it
     last_watched = get_last_watched_episode()
     start_index = 0
 
     if last_watched and slots:
-        # Find the last watched episode in the slots
-        for idx, slot in enumerate(slots):
-            if slot.episode_path == last_watched:
-                # Start from the next episode
-                start_index = (idx + 1) % len(slots)
-                print(
-                    f"[Playlist] Resuming from episode after: {last_watched}",
-                    flush=True,
-                )
-                break
+        # Validate that the last watched episode still exists
+        if not os.path.exists(last_watched) or not os.path.isfile(last_watched):
+            LOGGER.warning(
+                "Last watched episode no longer exists: %s. Starting from beginning.",
+                last_watched,
+            )
+            last_watched = None  # Reset to start from beginning
+
+        if last_watched:
+            # Find the last watched episode in the slots
+            for idx, slot in enumerate(slots):
+                if slot.episode_path == last_watched:
+                    # Start from the next episode
+                    start_index = (idx + 1) % len(slots)
+                    LOGGER.info("Resuming from episode after: %s", last_watched)
+                    break
 
     # Rotate slots to start from the resume point
     rotated_slots = list(slots[start_index:]) + list(slots[:start_index])

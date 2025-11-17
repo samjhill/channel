@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
 from typing import Dict, Optional
+
+LOGGER = logging.getLogger(__name__)
 
 try:
     from playlist_service import (
@@ -219,14 +222,14 @@ def stream_file(
     """
     # Validate file exists before attempting to stream
     if not os.path.exists(src):
-        print(f"ERROR: File not found: {src}", flush=True)
+        LOGGER.error("File not found: %s", src)
         return False
 
     if not os.path.isfile(src):
-        print(f"ERROR: Path is not a file: {src}", flush=True)
+        LOGGER.error("Path is not a file: %s", src)
         return False
 
-    print(f"Streaming: {src}", flush=True)
+    LOGGER.info("Streaming: %s", src)
     video_height = probe_video_height(src)
     overlay_args, has_overlay = build_overlay_args(video_height)
     cmd = [
@@ -307,11 +310,16 @@ def stream_file(
                     # Fallback: direct comparison
                     paths_differ = playhead_path != src
 
-                # Debug logging (can be removed later)
+                # Debug logging
                 if paths_differ:
-                    print(
-                        f"DEBUG: Playhead check - src={src}, playhead={playhead_path}, normalized_src={normalized_src if _normalize_path else 'N/A'}, normalized_playhead={normalized_playhead if _normalize_path else 'N/A'}, paths_differ={paths_differ}, mtime_match={abs(playhead_mtime - playlist_mtime) < 0.001}",
-                        flush=True,
+                    LOGGER.debug(
+                        "Playhead check - src=%s, playhead=%s, normalized_src=%s, normalized_playhead=%s, paths_differ=%s, mtime_match=%s",
+                        src,
+                        playhead_path,
+                        normalized_src if _normalize_path else "N/A",
+                        normalized_playhead if _normalize_path else "N/A",
+                        paths_differ,
+                        abs(playhead_mtime - playlist_mtime) < 0.001,
                     )
 
                 # If playhead points to a different file, skip was triggered
@@ -332,9 +340,14 @@ def stream_file(
                     # Allow skip if mtime matches OR if playhead was recently updated
                     # This handles cases where playlists are out of sync but skip was just triggered
                     if mtime_match or recent_update:
-                        print(
-                            f"Skip detected: interrupting {src} to jump to {playhead_path} (mtime_match={mtime_match}, recent_update={recent_update}, updated_at={playhead_updated_at}, current_time={current_time_check})",
-                            flush=True,
+                        LOGGER.info(
+                            "Skip detected: interrupting %s to jump to %s (mtime_match=%s, recent_update=%s, updated_at=%s, current_time=%s)",
+                            src,
+                            playhead_path,
+                            mtime_match,
+                            recent_update,
+                            playhead_updated_at,
+                            current_time_check,
                         )
                         # Terminate FFmpeg process
                         process.terminate()
@@ -346,9 +359,14 @@ def stream_file(
                             process.wait()
                         return False  # Stream was interrupted
                     else:
-                        print(
-                            f"DEBUG: Skip check failed - mtime_match={mtime_match}, recent_update={recent_update}, playhead_mtime={playhead_mtime}, playlist_mtime={playlist_mtime}, updated_at={playhead_updated_at}, current_time={current_time_check}",
-                            flush=True,
+                        LOGGER.debug(
+                            "Skip check failed - mtime_match=%s, recent_update=%s, playhead_mtime=%s, playlist_mtime=%s, updated_at=%s, current_time=%s",
+                            mtime_match,
+                            recent_update,
+                            playhead_mtime,
+                            playlist_mtime,
+                            playhead_updated_at,
+                            current_time_check,
                         )
 
     # Process finished, check return code
@@ -361,15 +379,14 @@ def stream_file(
             else ""
         )
         if returncode == -15:  # SIGTERM (terminated by us)
-            print(f"Stream interrupted: {src}", flush=True)
+            LOGGER.info("Stream interrupted: %s", src)
             return False
         else:
-            print(
-                f"ERROR: FFmpeg failed with return code {returncode} for {src}",
-                flush=True,
+            LOGGER.error(
+                "FFmpeg failed with return code %d for %s", returncode, src
             )
             if stderr_output:
-                print(f"FFmpeg stderr: {stderr_output[:500]}", flush=True)
+                LOGGER.error("FFmpeg stderr: %s", stderr_output[:500])
             return False
 
     return True
@@ -400,9 +417,9 @@ def record_playhead(src: str, index: int, playlist_mtime: float) -> None:
 
             if paths_differ:
                 # Playhead was recently updated externally to a different file (skip command), don't overwrite
-                print(
-                    f"Skipping playhead record - was recently updated externally to different file (age: {time.time() - existing_updated_at:.2f}s)",
-                    flush=True,
+                LOGGER.debug(
+                    "Skipping playhead record - was recently updated externally to different file (age: %.2fs)",
+                    time.time() - existing_updated_at,
                 )
                 return
 
@@ -446,12 +463,12 @@ def run_stream():
         try:
             files, playlist_mtime = load_playlist()
         except FileNotFoundError as exc:
-            print(exc, flush=True)
+            LOGGER.warning("Playlist file not found: %s", exc)
             time.sleep(5)
             continue
 
         if not files:
-            print("Playlist empty, waiting for media files...", flush=True)
+            LOGGER.info("Playlist empty, waiting for media files...")
             time.sleep(10)
             continue
 
@@ -478,13 +495,10 @@ def run_stream():
                 if is_valid:
                     valid_files.append(file_path)
                 else:
-                    print(
-                        f"WARNING: Skipping invalid playlist entry: {file_path}",
-                        flush=True,
-                    )
+                    LOGGER.warning("Skipping invalid playlist entry: %s", file_path)
 
         if not valid_files:
-            print("No valid files in playlist, waiting...", flush=True)
+            LOGGER.info("No valid files in playlist, waiting...")
             time.sleep(10)
             continue
 
@@ -581,9 +595,10 @@ def run_stream():
                         matching_index
                     ]  # Use the actual file path from the playlist
                     playhead_updated_externally = True
-                    print(
-                        f"Playhead updated externally: jumping to {src} (index {next_index})",
-                        flush=True,
+                    LOGGER.info(
+                        "Playhead updated externally: jumping to %s (index %d)",
+                        src,
+                        next_index,
                     )
 
             if not playhead_updated_externally:
@@ -646,16 +661,19 @@ def run_stream():
                                 matching_index
                             ]  # Use the actual file path from the playlist
                             stream_was_skipped = True
-                            print(
-                                f"Jumping to skipped episode: {src} (index {next_index})",
-                                flush=True,
+                            LOGGER.info(
+                                "Jumping to skipped episode: %s (index %d)",
+                                src,
+                                next_index,
                             )
                             # Continue to next iteration to stream the skipped-to file
                             continue
                         else:
-                            print(
-                                f"DEBUG: Skip target not found or invalid - matching_index={matching_index}, mtime_match={mtime_match}, recent_update={recent_update}",
-                                flush=True,
+                            LOGGER.debug(
+                                "Skip target not found or invalid - matching_index=%s, mtime_match=%s, recent_update=%s",
+                                matching_index,
+                                mtime_match,
+                                recent_update,
                             )
 
             last_played = src
@@ -664,20 +682,19 @@ def run_stream():
             if streaming_succeeded and is_episode_entry(src) and not stream_was_skipped:
                 mark_episode_watched(src)
             elif not streaming_succeeded and not stream_was_skipped:
-                print(
-                    f"WARNING: Skipping watch progress update for failed stream: {src}",
-                    flush=True,
+                LOGGER.warning(
+                    "Skipping watch progress update for failed stream: %s", src
                 )
 
             try:
                 files, playlist_mtime = load_playlist()
             except FileNotFoundError as exc:
-                print(exc, flush=True)
+                LOGGER.warning("Playlist file not found after update: %s", exc)
                 time.sleep(5)
                 break
 
             if not files:
-                print("Playlist empty after update, waiting...", flush=True)
+                LOGGER.info("Playlist empty after update, waiting...")
                 time.sleep(10)
                 break
 

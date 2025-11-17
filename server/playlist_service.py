@@ -5,11 +5,25 @@ Shared helpers for inspecting and updating the generated playlist file.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+# File locking support (cross-platform)
+try:
+    import fcntl  # Linux/macOS
+except ImportError:
+    fcntl = None  # type: ignore
+
+try:
+    import msvcrt  # Windows
+except ImportError:
+    msvcrt = None  # type: ignore
+
+LOGGER = logging.getLogger(__name__)
 
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov")
 
@@ -412,9 +426,31 @@ def resolve_watch_progress_path() -> Path:
     return _watch_progress_path_cache
 
 
+def _lock_file(file_handle) -> None:
+    """Lock a file handle for exclusive access (cross-platform)."""
+    if fcntl:
+        # Linux/macOS
+        fcntl.flock(file_handle.fileno(), fcntl.LOCK_EX)
+    elif msvcrt:
+        # Windows
+        msvcrt.locking(file_handle.fileno(), msvcrt.LK_LOCK, 1)
+    # If neither is available, continue without locking (graceful degradation)
+
+
+def _unlock_file(file_handle) -> None:
+    """Unlock a file handle (cross-platform)."""
+    if fcntl:
+        # Linux/macOS
+        fcntl.flock(file_handle.fileno(), fcntl.LOCK_UN)
+    elif msvcrt:
+        # Windows
+        msvcrt.locking(file_handle.fileno(), msvcrt.LK_UNLCK, 1)
+    # If neither is available, no-op
+
+
 def load_watch_progress() -> Dict[str, Any]:
     """
-    Load watch progress state with mtime-based caching.
+    Load watch progress state with mtime-based caching and file locking.
     Returns a dict mapping episode paths to their watch status.
     Format: { "episode_path": { "watched": bool, "watched_at": float, ... }, ... }
     """
@@ -443,17 +479,27 @@ def load_watch_progress() -> Dict[str, Any]:
     ):
         return _watch_progress_cache
 
-    # Load from file
-    with progress_path.open("r", encoding="utf-8") as fh:
-        try:
-            progress = json.load(fh)
-            # Ensure required keys exist
-            if "episodes" not in progress:
-                progress["episodes"] = {}
-            if "last_watched" not in progress:
-                progress["last_watched"] = None
-        except json.JSONDecodeError:
-            progress = {"episodes": {}, "last_watched": None, "updated_at": 0.0}
+    # Load from file with locking
+    try:
+        with progress_path.open("r", encoding="utf-8") as fh:
+            _lock_file(fh)
+            try:
+                progress = json.load(fh)
+                # Ensure required keys exist
+                if "episodes" not in progress:
+                    progress["episodes"] = {}
+                if "last_watched" not in progress:
+                    progress["last_watched"] = None
+            except json.JSONDecodeError as e:
+                LOGGER.warning(
+                    "Failed to parse watch progress file: %s. Using defaults.", e
+                )
+                progress = {"episodes": {}, "last_watched": None, "updated_at": 0.0}
+            finally:
+                _unlock_file(fh)
+    except (OSError, IOError) as e:
+        LOGGER.warning("Failed to read watch progress file: %s. Using defaults.", e)
+        progress = {"episodes": {}, "last_watched": None, "updated_at": 0.0}
 
     # Update cache
     _watch_progress_cache = progress
@@ -463,19 +509,48 @@ def load_watch_progress() -> Dict[str, Any]:
 
 
 def save_watch_progress(progress: Dict[str, Any]) -> None:
-    """Save watch progress state and update cache."""
+    """Save watch progress state with file locking and update cache."""
     global _watch_progress_cache, _watch_progress_mtime
 
     progress_path = resolve_watch_progress_path()
     progress_path.parent.mkdir(parents=True, exist_ok=True)
     progress["updated_at"] = time.time()
 
+    # Write to temp file first, then replace (atomic write)
+    # Use locking on the temp file to prevent concurrent writes
     with tempfile.NamedTemporaryFile(
         "w", encoding="utf-8", dir=str(progress_path.parent), delete=False
     ) as tmp:
-        json.dump(progress, tmp, indent=2)
+        try:
+            _lock_file(tmp)
+            try:
+                json.dump(progress, tmp, indent=2)
+                tmp.flush()
+                os.fsync(tmp.fileno())  # Force write to disk
+            finally:
+                _unlock_file(tmp)
+        except (OSError, IOError) as e:
+            LOGGER.error("Failed to write watch progress to temp file: %s", e)
+            raise
         tmp_path = Path(tmp.name)
-    tmp_path.replace(progress_path)
+
+    # Atomic replace
+    try:
+        tmp_path.replace(progress_path)
+        # Force filesystem sync
+        try:
+            with progress_path.open("r") as fh:
+                os.fsync(fh.fileno())
+        except (OSError, AttributeError):
+            pass  # Graceful degradation if fsync fails
+    except (OSError, IOError) as e:
+        LOGGER.error("Failed to replace watch progress file: %s", e)
+        # Clean up temp file
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass
+        raise
 
     # Update cache after write
     try:
