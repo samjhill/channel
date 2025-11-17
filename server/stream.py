@@ -123,8 +123,6 @@ def overlay_position_expr(position: str, margin: int) -> tuple[str, str]:
 
 def probe_video_height(src: str) -> Optional[int]:
     """Probe video height with caching to avoid repeated ffprobe calls."""
-    global _video_height_cache
-    
     # Check cache first
     if src in _video_height_cache:
         return _video_height_cache[src]
