@@ -42,7 +42,7 @@
           maxBufferLength: 90,
           maxMaxBufferLength: 300,
           backBufferLength: 120,
-          liveSyncDuration: 18,
+          liveSyncDuration: 20,
           liveMaxLatencyDuration: 120,
           maxBufferSize: 60 * 1000 * 1000,
           maxBufferHole: 0.5,
@@ -91,7 +91,8 @@
         
         hls.on(Hls.Events.MANIFEST_PARSED, function () {
           console.log('Manifest parsed, starting playback');
-          video.play().catch(() => {});
+          // Don't play immediately - let HLS.js buffer first
+          // We'll start playback after we have sufficient buffer
           lastSegmentCount = 0;
           lastSegmentEndTime = 0;
           lastSegmentStartTime = 0;
@@ -102,8 +103,26 @@
           // Update last manifest reload time
           lastManifestReload = Date.now();
           
-          // Don't seek immediately on manifest parse - wait for segments to buffer first
-          // The automatic catch-up logic will handle seeking once we have buffer
+          // Wait a bit for buffer to build, then start playback
+          setTimeout(() => {
+            const levels = hls.levels;
+            if (levels && levels.length > 0) {
+              const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
+              const level = levels[currentLevel];
+              if (level && level.details) {
+                const fragments = level.details.fragments;
+                if (fragments && fragments.length > 0) {
+                  const lastFragment = fragments[fragments.length - 1];
+                  const liveEdge = lastFragment.start + lastFragment.duration;
+                  // Start playback 20s behind live edge to ensure buffer
+                  const startTime = Math.max(0, liveEdge - 20);
+                  video.currentTime = startTime;
+                  console.log(`Starting playback at ${startTime.toFixed(1)}s (live edge: ${liveEdge.toFixed(1)}s)`);
+                }
+              }
+            }
+            video.play().catch(() => {});
+          }, 2000); // Wait 2 seconds for initial buffer
         });
         
         // Handle manifest updates (e.g., when skipping episodes)

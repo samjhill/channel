@@ -268,7 +268,6 @@ def stream_file(
         "6",
         "-hls_list_size",
         "30",
-        "30",
         "-hls_flags",
         "delete_segments+append_list+omit_endlist+discont_start",
         "-hls_segment_type",
