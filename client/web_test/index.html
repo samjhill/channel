@@ -87,38 +87,8 @@
           // Update last manifest reload time
           lastManifestReload = Date.now();
           
-          // Force seek to live edge when manifest is parsed (new content available)
-          // But only if we're not in the middle of a buffer stall recovery
-          if (!recoveryInProgress) {
-            setTimeout(() => {
-              try {
-                const levels = hls.levels;
-                if (levels && levels.length > 0) {
-                  const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
-                  const level = levels[currentLevel];
-                  if (level && level.details) {
-                    const fragments = level.details.fragments;
-                    if (fragments && fragments.length > 0) {
-                      const lastFragment = fragments[fragments.length - 1];
-                      const liveEdge = lastFragment.start + lastFragment.duration;
-                      const currentTime = video.currentTime;
-                      const latency = liveEdge - currentTime;
-                      
-                      // Only seek if we're significantly behind (more than 10 seconds)
-                      // This prevents seeking when we're already close to live edge
-                      if (latency > 10) {
-                        console.log(`Manifest parsed - seeking to live edge: ${liveEdge.toFixed(1)}s (${latency.toFixed(1)}s behind)`);
-                        video.currentTime = Math.max(0, liveEdge - 6);
-                        video.play().catch(() => {});
-                      }
-                    }
-                  }
-                }
-              } catch (e) {
-                console.error('Error seeking to live edge after manifest parse:', e);
-              }
-            }, 200);
-          }
+          // Don't seek immediately on manifest parse - wait for segments to buffer first
+          // The automatic catch-up logic will handle seeking once we have buffer
         });
         
         // Handle manifest updates (e.g., when skipping episodes)
@@ -367,10 +337,11 @@
         }, 5000); // Check every 5 seconds, but only reload if cooldown passed
         
         // Handle fragment loading - seek to live edge when new fragments are available after discontinuity
+        // But only if we have sufficient buffer
         hls.on(Hls.Events.FRAG_LOADED, function (event, data) {
           try {
-            // If we detected a discontinuity, aggressively seek forward
-            if (discontinuityDetected) {
+            // If we detected a discontinuity, seek forward but only if we have buffer
+            if (discontinuityDetected && !recoveryInProgress) {
               const levels = hls.levels;
               if (levels && levels.length > 0) {
                 const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
@@ -381,11 +352,25 @@
                     const lastFragment = fragments[fragments.length - 1];
                     const liveEdge = lastFragment.start + lastFragment.duration;
                     const currentTime = video.currentTime;
+                    const latency = liveEdge - currentTime;
                     
-                    // If we're more than 5 seconds behind the live edge, seek forward aggressively
-                    if (liveEdge - currentTime > 5) {
-                      console.log(`⚠️ Fragment loaded - seeking to live edge: ${liveEdge.toFixed(1)}s (currently at ${currentTime.toFixed(1)}s)`);
-                      video.currentTime = Math.max(0, liveEdge - 6);
+                    // Check if we have sufficient buffer before seeking
+                    const buffered = video.buffered;
+                    let hasBuffer = false;
+                    if (buffered.length > 0) {
+                      for (let i = 0; i < buffered.length; i++) {
+                        if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                          const remaining = buffered.end(i) - currentTime;
+                          hasBuffer = remaining > 5; // Need at least 5 seconds buffer
+                          break;
+                        }
+                      }
+                    }
+                    
+                    // Only seek if we're behind AND have sufficient buffer
+                    if (latency > 10 && hasBuffer) {
+                      console.log(`⚠️ Fragment loaded - seeking to live edge: ${liveEdge.toFixed(1)}s (currently at ${currentTime.toFixed(1)}s, ${latency.toFixed(1)}s behind)`);
+                      video.currentTime = Math.max(0, liveEdge - 8);
                       video.play().catch(() => {});
                       discontinuityDetected = false;
                     }
