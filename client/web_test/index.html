@@ -50,7 +50,15 @@
           // Force more frequent manifest reloads to detect skips faster
           manifestLoadingTimeOut: 10000,
           manifestLoadingMaxRetry: 4,
-          manifestLoadingRetryDelay: 1000
+          manifestLoadingRetryDelay: 1000,
+          // Improve buffer management to prevent stalls
+          highBufferWatchdogPeriod: 2,
+          nudgeOffset: 0.1,
+          nudgeMaxRetry: 3,
+          maxFragLoadingTimeMs: 20000,
+          fragLoadingTimeOut: 20000,
+          fragLoadingMaxRetry: 4,
+          fragLoadingRetryDelay: 1000
         };
         const hls = new Hls(hlsConfig);
         hls.loadSource(streamUrl);
@@ -470,9 +478,9 @@
                   video.pause();
                 }
                 
-                // If buffer is critically low, be more aggressive - seek immediately to live edge
+                // If buffer is critically low, try to recover more carefully
                 if (isCriticallyLow) {
-                  console.log(`⚠️ Critically low buffer (${bufferLen.toFixed(3)}s), seeking to live edge immediately`);
+                  console.log(`⚠️ Critically low buffer (${bufferLen.toFixed(3)}s), attempting recovery`);
                   try {
                     const levels = hls.levels;
                     if (levels && levels.length > 0) {
@@ -483,21 +491,54 @@
                         if (fragments && fragments.length > 0) {
                           const lastFragment = fragments[fragments.length - 1];
                           const liveEdge = lastFragment.start + lastFragment.duration;
-                          // Seek to live edge immediately when buffer is critically low
-                          const seekTime = Math.max(0, liveEdge - 6);
-                          video.currentTime = seekTime;
-                          // Force manifest reload to get fresh segments
-                          hls.startLoad();
-                          setTimeout(() => {
-                            video.play().catch(() => {});
-                            recoveryInProgress = false;
-                          }, 1000);
-                          return; // Exit early, don't wait
+                          const currentTime = video.currentTime;
+                          const latency = liveEdge - currentTime;
+                          
+                          // Check if we're actually behind the live edge
+                          // If we're at or near live edge, don't seek - just wait for buffer
+                          if (latency > 10) {
+                            // We're behind, seek forward but not all the way to live edge
+                            // Seek to a position that should have buffer (12s before live edge)
+                            const seekTime = Math.max(0, liveEdge - 12);
+                            console.log(`Seeking from ${currentTime.toFixed(1)}s to ${seekTime.toFixed(1)}s (live edge: ${liveEdge.toFixed(1)}s, ${latency.toFixed(1)}s behind)`);
+                            video.currentTime = seekTime;
+                            // Force manifest reload to get fresh segments
+                            hls.startLoad();
+                            setTimeout(() => {
+                              video.play().catch(() => {});
+                              recoveryInProgress = false;
+                            }, 1500);
+                            return; // Exit early
+                          } else {
+                            // We're at or near live edge, just wait for buffer to rebuild
+                            // Don't seek, just reload manifest and wait
+                            console.log(`At live edge (${latency.toFixed(1)}s behind), waiting for buffer to rebuild`);
+                            hls.startLoad();
+                            setTimeout(() => {
+                              video.play().catch(() => {});
+                              recoveryInProgress = false;
+                            }, 2000);
+                            return; // Exit early
+                          }
                         }
                       }
                     }
+                    // Fallback: just reload manifest and wait
+                    console.log(`No fragments available, reloading manifest and waiting`);
+                    hls.startLoad();
+                    setTimeout(() => {
+                      video.play().catch(() => {});
+                      recoveryInProgress = false;
+                    }, 2000);
+                    return;
                   } catch (e) {
                     console.error('Error during critical buffer recovery:', e);
+                    // Fallback: just wait
+                    setTimeout(() => {
+                      video.play().catch(() => {});
+                      recoveryInProgress = false;
+                    }, 2000);
+                    return;
                   }
                 }
                 
