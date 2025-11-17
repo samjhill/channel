@@ -235,16 +235,32 @@
                   }
                   
                   // Check if segments stopped updating (indicates FFmpeg restart)
-                  // But only if we haven't recently reloaded the manifest
-                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 2000 && now - lastManifestReload > manifestReloadCooldown) {
-                    // Segments haven't changed in 2+ seconds - might be a restart
-                    consecutiveStaleManifests++;
-                    if (consecutiveStaleManifests >= 3) {
-                      // Force a manifest reload, but only if we haven't reloaded recently
-                      console.log('⚠️ No segment updates detected for 6+ seconds, forcing manifest reload...');
-                      hls.startLoad();
-                      lastManifestReload = now;
-                      consecutiveStaleManifests = 0;
+                  // But only if we haven't recently reloaded the manifest and buffer is good
+                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 2000 && now - lastManifestReload > manifestReloadCooldown && !recoveryInProgress) {
+                    // Check buffer before forcing reload
+                    const buffered = video.buffered;
+                    let bufferRemaining = 0;
+                    if (buffered.length > 0) {
+                      const currentTime = video.currentTime;
+                      for (let i = 0; i < buffered.length; i++) {
+                        if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                          bufferRemaining = buffered.end(i) - currentTime;
+                          break;
+                        }
+                      }
+                    }
+                    
+                    // Only force reload if buffer is good (> 5 seconds)
+                    if (bufferRemaining > 5) {
+                      // Segments haven't changed in 2+ seconds - might be a restart
+                      consecutiveStaleManifests++;
+                      if (consecutiveStaleManifests >= 3) {
+                        // Force a manifest reload, but only if we haven't reloaded recently
+                        console.log('⚠️ No segment updates detected for 6+ seconds, forcing manifest reload...');
+                        hls.startLoad();
+                        lastManifestReload = now;
+                        consecutiveStaleManifests = 0;
+                      }
                     }
                     lastManifestCheck = now;
                   } else if (fragments.length !== lastSegmentCount) {
@@ -331,19 +347,43 @@
         // Force periodic manifest reloads to catch skips faster
         // This ensures we detect when FFmpeg restarts with a new file
         // But be less aggressive to avoid buffer stalls
+        // Don't reload if we're in recovery or buffer is low
         const forceManifestReload = setInterval(() => {
           try {
+            // Don't reload manifest if we're recovering from a buffer stall
+            if (recoveryInProgress) {
+              return;
+            }
+            
+            // Check if buffer is low - if so, don't reload (let it build up)
+            const buffered = video.buffered;
+            let bufferRemaining = 0;
+            if (buffered.length > 0) {
+              const currentTime = video.currentTime;
+              for (let i = 0; i < buffered.length; i++) {
+                if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                  bufferRemaining = buffered.end(i) - currentTime;
+                  break;
+                }
+              }
+            }
+            
+            // Don't reload if buffer is low (< 5 seconds) - let it build up
+            if (bufferRemaining < 5) {
+              return;
+            }
+            
             const now = Date.now();
             // Only reload if enough time has passed since last reload
-            if (now - lastManifestReload > 5000) {
-              // Reload manifest every 5 seconds (reduced from 2s to avoid buffer issues)
+            if (now - lastManifestReload > 10000) {
+              // Reload manifest every 10 seconds (increased from 5s to avoid buffer issues)
               hls.startLoad();
               lastManifestReload = now;
             }
           } catch (e) {
             // Ignore errors
           }
-        }, 5000); // Check every 5 seconds, but only reload if cooldown passed
+        }, 10000); // Check every 10 seconds, but only reload if cooldown passed and buffer is good
         
         // Handle fragment loading - seek to live edge when new fragments are available after discontinuity
         // But only if we have sufficient buffer
