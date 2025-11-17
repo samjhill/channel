@@ -301,8 +301,6 @@ def _normalize_path(path: str) -> str:
     (/Volumes/media/tv/...) to a canonical form for comparison.
     Uses caching to avoid repeated string operations.
     """
-    global _path_normalization_cache
-
     if not path:
         return path
 
