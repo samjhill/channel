@@ -147,20 +147,40 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
       return;
     }
     setSkipping(true);
-    setStatus(null);
+    setStatus("Sending skip command...");
     setError(null);
+    
+    // Show progress updates during skip
+    const progressInterval = setInterval(() => {
+      setStatus((prev) => {
+        if (prev === "Sending skip command...") {
+          return "Waiting for streamer to skip...";
+        } else if (prev === "Waiting for streamer to skip...") {
+          return "Confirming skip...";
+        } else if (prev === "Confirming skip...") {
+          return "Sending skip command..."; // Cycle back
+        }
+        return prev;
+      });
+    }, 800); // Update every 800ms to show progress
+    
     try {
+      const startTime = Date.now();
       const nextSnapshot = await skipCurrentEpisode(channelId);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      clearInterval(progressInterval);
       setSnapshot(nextSnapshot);
       setDraft(nextSnapshot.upcoming);
       setSkipped(new Set());
       setDirty(false);
-      setStatus("Skipped to next episode");
+      setStatus(`Skipped to next episode (${elapsed}s)`);
       setTimeout(() => setStatus(null), 3000);
     } catch (err) {
+      clearInterval(progressInterval);
       const message =
         err instanceof Error ? err.message : "Failed to skip episode";
       setError(message);
+      setStatus(null);
       console.error("Skip episode error:", err);
       // Keep error visible for longer so user can see it
       setTimeout(() => setError(null), 10000);
@@ -228,6 +248,11 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
                 {skipping ? "Skipping…" : "Skip Current Episode"}
               </button>
             </div>
+            {skipping && status && (
+              <div className="playlist-status" style={{ marginTop: "0.5rem", marginBottom: "0.5rem" }}>
+                ⏳ {status}
+              </div>
+            )}
             {!snapshot && loading && <p>Loading current item…</p>}
             {snapshot && snapshot.current ? (
               <div>

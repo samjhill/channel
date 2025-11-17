@@ -309,8 +309,9 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
     
     # Wait for the streamer to actually jump to the new episode (synchronous)
     # Poll the container playhead to confirm the skip happened
-    max_wait_time = 10.0  # Maximum time to wait for skip (seconds)
-    poll_interval = 0.5  # Check every 0.5 seconds
+    # Reduced wait time: streamer checks playhead every 0.5s, so should detect within 1-2s
+    max_wait_time = 5.0  # Maximum time to wait for skip (seconds) - reduced from 10s
+    poll_interval = 0.2  # Check every 0.2 seconds for faster confirmation - reduced from 0.5s
     start_time = time.time()
     skip_confirmed = False
     
@@ -330,7 +331,7 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
             result = subprocess.run(
                 ["docker", "exec", "tvchannel", "cat", "/app/hls/playhead.json"],
                 capture_output=True,
-                timeout=2
+                timeout=1  # Reduced timeout from 2s to 1s for faster polling
             )
             if result.returncode == 0:
                 import json
@@ -350,18 +351,22 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
                 paths_match_target = normalized_container == normalized_next if normalized_container else False
                 path_changed_from_original = normalized_container != normalized_current if normalized_container else False
                 
-                # Also check if it was updated recently (within last 10 seconds) to ensure it's a fresh update
+                # More lenient: check if it was updated recently (within last 15 seconds) to ensure it's a fresh update
+                # Increased window to account for Docker sync delays
                 current_time = time.time()
-                recently_updated = container_updated_at > 0 and (current_time - container_updated_at) < 10.0
+                recently_updated = container_updated_at > 0 and (current_time - container_updated_at) < 15.0
                 
                 if paths_match_target and recently_updated:
                     skip_confirmed = True
-                    print(f"Skip API: Skip confirmed! Streamer jumped to {next_path} (updated {current_time - container_updated_at:.2f}s ago)", flush=True)
+                    elapsed = time.time() - start_time
+                    print(f"Skip API: Skip confirmed! Streamer jumped to {next_path} (took {elapsed:.2f}s, updated {current_time - container_updated_at:.2f}s ago)", flush=True)
                     break
                 elif path_changed_from_original and recently_updated:
                     # Playhead changed from original and was recently updated - skip happened
+                    # This is sufficient confirmation - streamer detected the skip
                     skip_confirmed = True
-                    print(f"Skip API: Skip confirmed! Streamer jumped to {container_path} (different from original, updated {current_time - container_updated_at:.2f}s ago)", flush=True)
+                    elapsed = time.time() - start_time
+                    print(f"Skip API: Skip confirmed! Streamer jumped to {container_path} (took {elapsed:.2f}s, different from original, updated {current_time - container_updated_at:.2f}s ago)", flush=True)
                     break
         except Exception as e:
             print(f"Skip API: Error checking container playhead: {e}", flush=True)

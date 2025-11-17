@@ -45,7 +45,11 @@
           liveMaxLatencyDuration: 90,
           maxBufferSize: 60 * 1000 * 1000,
           maxBufferHole: 0.5,
-          startLevel: -1
+          startLevel: -1,
+          // Force more frequent manifest reloads to detect skips faster
+          manifestLoadingTimeOut: 10000,
+          manifestLoadingMaxRetry: 4,
+          manifestLoadingRetryDelay: 1000
         };
         const hls = new Hls(hlsConfig);
         hls.loadSource(streamUrl);
@@ -63,6 +67,12 @@
         let discontinuityDetected = false;
         let lastManifestUrl = '';
         let manifestReloadCount = 0;
+        let lastLiveEdgeTime = 0;
+        let consecutiveStaleManifests = 0;
+        let lastPlaybackPosition = 0;
+        let lastPlaybackCheck = Date.now();
+        let lastManifestReload = 0;
+        let manifestReloadCooldown = 3000; // Don't reload manifest more than once every 3 seconds
         
         hls.on(Hls.Events.MANIFEST_PARSED, function () {
           console.log('Manifest parsed, starting playback');
@@ -72,6 +82,43 @@
           lastSegmentStartTime = 0;
           discontinuityDetected = false;
           manifestReloadCount++;
+          consecutiveStaleManifests = 0;
+          lastLiveEdgeTime = 0;
+          // Update last manifest reload time
+          lastManifestReload = Date.now();
+          
+          // Force seek to live edge when manifest is parsed (new content available)
+          // But only if we're not in the middle of a buffer stall recovery
+          if (!recoveryInProgress) {
+            setTimeout(() => {
+              try {
+                const levels = hls.levels;
+                if (levels && levels.length > 0) {
+                  const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
+                  const level = levels[currentLevel];
+                  if (level && level.details) {
+                    const fragments = level.details.fragments;
+                    if (fragments && fragments.length > 0) {
+                      const lastFragment = fragments[fragments.length - 1];
+                      const liveEdge = lastFragment.start + lastFragment.duration;
+                      const currentTime = video.currentTime;
+                      const latency = liveEdge - currentTime;
+                      
+                      // Only seek if we're significantly behind (more than 10 seconds)
+                      // This prevents seeking when we're already close to live edge
+                      if (latency > 10) {
+                        console.log(`Manifest parsed - seeking to live edge: ${liveEdge.toFixed(1)}s (${latency.toFixed(1)}s behind)`);
+                        video.currentTime = Math.max(0, liveEdge - 6);
+                        video.play().catch(() => {});
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                console.error('Error seeking to live edge after manifest parse:', e);
+              }
+            }, 200);
+          }
         });
         
         // Handle manifest updates (e.g., when skipping episodes)
@@ -161,6 +208,23 @@
           try {
             const now = Date.now();
             const levels = hls.levels;
+            const currentPlaybackTime = video.currentTime;
+            
+            // Check if playback position is stuck (indicates stream changed)
+            // But only if we haven't recently reloaded the manifest
+            if (currentPlaybackTime > 0 && Math.abs(currentPlaybackTime - lastPlaybackPosition) < 0.1) {
+              // Playback hasn't advanced much
+              if (now - lastPlaybackCheck > 5000 && now - lastManifestReload > manifestReloadCooldown) {
+                // Stuck for 5+ seconds and haven't reloaded recently - might be a skip/restart
+                console.log('⚠️ Playback appears stuck, forcing manifest reload...');
+                hls.startLoad();
+                lastManifestReload = now;
+                lastPlaybackCheck = now;
+              }
+            } else {
+              lastPlaybackCheck = now;
+            }
+            lastPlaybackPosition = currentPlaybackTime;
             
             if (levels && levels.length > 0) {
               const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
@@ -174,15 +238,38 @@
                   const lastFragment = fragments[fragments.length - 1];
                   const currentStartTime = firstFragment.start;
                   const currentEndTime = lastFragment.start + lastFragment.duration;
+                  const liveEdge = currentEndTime;
+                  
+                  // Check if we're way behind the live edge (indicates stream restarted)
+                  if (currentPlaybackTime > 0 && liveEdge > 0) {
+                    const latency = liveEdge - currentPlaybackTime;
+                    if (latency > 60 && lastLiveEdgeTime > 0) {
+                      // We're more than 60 seconds behind, and we had a previous live edge
+                      // This likely means the stream restarted
+                      console.log(`⚠️ Large latency detected (${latency.toFixed(1)}s behind live edge) - likely stream restart, seeking forward`);
+                      const seekTime = Math.max(0, liveEdge - 6);
+                      video.currentTime = seekTime;
+                      video.play().catch(() => {});
+                      discontinuityDetected = true;
+                      consecutiveStaleManifests = 0;
+                    }
+                  }
                   
                   // Check if segments stopped updating (indicates FFmpeg restart)
-                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 2000) {
+                  // But only if we haven't recently reloaded the manifest
+                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 2000 && now - lastManifestReload > manifestReloadCooldown) {
                     // Segments haven't changed in 2+ seconds - might be a restart
-                    // Force a manifest reload more aggressively
-                    console.log('⚠️ No segment updates detected, forcing manifest reload...');
-                    hls.startLoad();
+                    consecutiveStaleManifests++;
+                    if (consecutiveStaleManifests >= 3) {
+                      // Force a manifest reload, but only if we haven't reloaded recently
+                      console.log('⚠️ No segment updates detected for 6+ seconds, forcing manifest reload...');
+                      hls.startLoad();
+                      lastManifestReload = now;
+                      consecutiveStaleManifests = 0;
+                    }
                     lastManifestCheck = now;
                   } else if (fragments.length !== lastSegmentCount) {
+                    consecutiveStaleManifests = 0;
                     lastManifestCheck = now;
                     const oldCount = lastSegmentCount;
                     lastSegmentCount = fragments.length;
@@ -211,10 +298,46 @@
                       const seekTime = Math.max(0, currentEndTime - 6);
                       video.currentTime = seekTime;
                       video.play().catch(() => {});
+                      discontinuityDetected = true;
                     }
                     
                     lastSegmentEndTime = currentEndTime;
                     lastSegmentStartTime = currentStartTime;
+                    lastLiveEdgeTime = liveEdge;
+                  }
+                  
+                  // Always check if we're behind the live edge and seek forward if needed
+                  // But be more conservative to avoid buffer stalls
+                  if (currentPlaybackTime > 0 && liveEdge > 0) {
+                    const latency = liveEdge - currentPlaybackTime;
+                    // Only seek if we have enough buffer (check buffered ranges)
+                    const buffered = video.buffered;
+                    let hasGoodBuffer = false;
+                    if (buffered.length > 0) {
+                      for (let i = 0; i < buffered.length; i++) {
+                        if (currentPlaybackTime >= buffered.start(i) && currentPlaybackTime < buffered.end(i)) {
+                          const remaining = buffered.end(i) - currentPlaybackTime;
+                          hasGoodBuffer = remaining > 5; // Need at least 5 seconds buffer before seeking
+                          break;
+                        }
+                      }
+                    }
+                    
+                    // Only seek if we're significantly behind AND have good buffer
+                    if (latency > 30 && latency < 120 && hasGoodBuffer) {
+                      // We're 30-120 seconds behind and have buffer - seek forward to catch up
+                      console.log(`⚠️ Behind live edge by ${latency.toFixed(1)}s (with buffer), seeking forward...`);
+                      const seekTime = Math.max(0, liveEdge - 6);
+                      video.currentTime = seekTime;
+                      video.play().catch(() => {});
+                    } else if (latency > 120) {
+                      // If we're way behind (120+ seconds), always seek regardless of buffer
+                      // This handles cases where we're stuck on old content
+                      console.log(`⚠️ Way behind live edge (${latency.toFixed(1)}s), forcing seek forward...`);
+                      const seekTime = Math.max(0, liveEdge - 6);
+                      video.currentTime = seekTime;
+                      video.play().catch(() => {});
+                    }
                   }
                 }
               }
@@ -223,7 +346,24 @@
             // Ignore errors during manifest check
             console.error('Error in manifest check:', e);
           }
-        }, 500); // Check every 500ms for faster detection
+        }, 300); // Check every 300ms for faster detection (reduced from 500ms)
+        
+        // Force periodic manifest reloads to catch skips faster
+        // This ensures we detect when FFmpeg restarts with a new file
+        // But be less aggressive to avoid buffer stalls
+        const forceManifestReload = setInterval(() => {
+          try {
+            const now = Date.now();
+            // Only reload if enough time has passed since last reload
+            if (now - lastManifestReload > 5000) {
+              // Reload manifest every 5 seconds (reduced from 2s to avoid buffer issues)
+              hls.startLoad();
+              lastManifestReload = now;
+            }
+          } catch (e) {
+            // Ignore errors
+          }
+        }, 5000); // Check every 5 seconds, but only reload if cooldown passed
         
         // Handle fragment loading - seek to live edge when new fragments are available after discontinuity
         hls.on(Hls.Events.FRAG_LOADED, function (event, data) {
@@ -319,12 +459,38 @@
                 lastStallRecovery = now;
                 recoveryInProgress = true;
                 
-                // Pause to let buffer rebuild
+                // Try to seek to live edge first - this might help if we're behind
+                try {
+                  const levels = hls.levels;
+                  if (levels && levels.length > 0) {
+                    const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
+                    const level = levels[currentLevel];
+                    if (level && level.details) {
+                      const fragments = level.details.fragments;
+                      if (fragments && fragments.length > 0) {
+                        const lastFragment = fragments[fragments.length - 1];
+                        const liveEdge = lastFragment.start + lastFragment.duration;
+                        const currentTime = video.currentTime;
+                        const latency = liveEdge - currentTime;
+                        
+                        // If we're significantly behind, seek forward to live edge
+                        if (latency > 5 && latency < 300) {
+                          console.log(`Buffer stall - seeking to live edge (${latency.toFixed(1)}s behind)`);
+                          video.currentTime = Math.max(0, liveEdge - 6);
+                        }
+                      }
+                    }
+                  }
+                } catch (e) {
+                  console.error('Error seeking during buffer stall recovery:', e);
+                }
+                
+                // Pause briefly to let buffer rebuild, then resume
                 if (!video.paused) {
                   video.pause();
                 }
                 
-                // Wait longer and check buffer state before resuming
+                // Wait and check buffer state before resuming
                 setTimeout(() => {
                   const buffered = video.buffered;
                   let hasBuffer = false;
@@ -333,7 +499,7 @@
                     for (let i = 0; i < buffered.length; i++) {
                       if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
                         const remaining = buffered.end(i) - currentTime;
-                        hasBuffer = remaining > 3; // Need at least 3 seconds
+                        hasBuffer = remaining > 2; // Need at least 2 seconds
                         break;
                       }
                     }
@@ -343,14 +509,16 @@
                     console.log('Buffer rebuilt, resuming playback');
                     video.play().catch(() => {});
                   } else {
-                    console.log('Buffer still low, waiting longer...');
-                    // Wait another 2 seconds
+                    console.log('Buffer still low, waiting for buffer to rebuild...');
+                    // Don't force another manifest reload immediately - wait a bit
+                    // The periodic reload will handle it, or we'll try again on next stall
+                    // Wait a bit longer for segments to load naturally
                     setTimeout(() => {
                       video.play().catch(() => {});
                     }, 2000);
                   }
                   recoveryInProgress = false;
-                }, 2000);
+                }, 1000); // Reduced from 2000ms to 1000ms for faster recovery
               }
             }
           }
