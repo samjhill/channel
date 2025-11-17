@@ -249,11 +249,13 @@ def stream_file(
         "-bufsize",
         "6000k",
         "-g",
-        "60",
+        "60",  # GOP size matches segment duration (6s * 10fps typical = 60 frames)
         "-sc_threshold",
-        "0",
+        "0",  # Disable scene change detection for consistent keyframes
         "-force_key_frames",
-        "expr:gte(t,n_forced*6)",
+        "expr:gte(t,n_forced*6)",  # Force keyframe every 6 seconds (segment duration)
+        "-keyint_min",
+        "60",  # Minimum keyframe interval (matches GOP size)
         "-c:a",
         "aac",
         "-ac",
@@ -267,13 +269,19 @@ def stream_file(
         "-hls_time",
         "6",
         "-hls_list_size",
-        "30",
+        "50",  # Increased from 30 to 50 segments (300s buffer vs 180s)
+        # This gives clients more segments to buffer, reducing stalls
         "-hls_flags",
-        "delete_segments+append_list+omit_endlist+discont_start",
+        "delete_segments+append_list+omit_endlist+discont_start+program_date_time",
+        # Added program_date_time for better synchronization
+        "-hls_playlist_type",
+        "live",  # Explicitly mark as live stream
         "-hls_segment_type",
         "mpegts",
         "-hls_segment_filename",
         "/app/hls/stream%04d.ts",
+        "-hls_segment_options",
+        "movflags=+faststart",  # Optimize segments for streaming
         OUTPUT,
     ]
 
