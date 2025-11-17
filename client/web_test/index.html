@@ -458,17 +458,50 @@
               
               // Check if buffer is actually critically low
               if (bufferInfo && bufferInfo.len < 2) {
-                console.log(`Buffer stall detected (${bufferInfo.len.toFixed(3)}s buffer), attempting recovery`);
+                const bufferLen = bufferInfo.len;
+                const isCriticallyLow = bufferLen < 0.5; // Less than 0.5 seconds is critical
+                
+                console.log(`Buffer stall detected (${bufferLen.toFixed(3)}s buffer), attempting recovery`);
                 lastStallRecovery = now;
                 recoveryInProgress = true;
                 
-                // Don't seek immediately when buffer is low - let it rebuild first
-                // Pause to let buffer rebuild, then check if we need to seek
+                // Pause to let buffer rebuild
                 if (!video.paused) {
                   video.pause();
                 }
                 
-                // Wait longer for buffer to rebuild before attempting any seeks
+                // If buffer is critically low, be more aggressive - seek immediately to live edge
+                if (isCriticallyLow) {
+                  console.log(`⚠️ Critically low buffer (${bufferLen.toFixed(3)}s), seeking to live edge immediately`);
+                  try {
+                    const levels = hls.levels;
+                    if (levels && levels.length > 0) {
+                      const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
+                      const level = levels[currentLevel];
+                      if (level && level.details) {
+                        const fragments = level.details.fragments;
+                        if (fragments && fragments.length > 0) {
+                          const lastFragment = fragments[fragments.length - 1];
+                          const liveEdge = lastFragment.start + lastFragment.duration;
+                          // Seek to live edge immediately when buffer is critically low
+                          const seekTime = Math.max(0, liveEdge - 6);
+                          video.currentTime = seekTime;
+                          // Force manifest reload to get fresh segments
+                          hls.startLoad();
+                          setTimeout(() => {
+                            video.play().catch(() => {});
+                            recoveryInProgress = false;
+                          }, 1000);
+                          return; // Exit early, don't wait
+                        }
+                      }
+                    }
+                  } catch (e) {
+                    console.error('Error during critical buffer recovery:', e);
+                  }
+                }
+                
+                // For non-critical stalls, wait a bit for buffer to rebuild
                 setTimeout(() => {
                   const buffered = video.buffered;
                   let hasBuffer = false;
@@ -504,25 +537,27 @@
                             const currentTime = video.currentTime;
                             const latency = liveEdge - currentTime;
                             
-                            // Only seek if we're way behind (60+ seconds) and have at least 1s buffer
-                            // This prevents seeking when buffer is too low
-                            if (latency > 60 && bufferRemaining > 1) {
-                              console.log(`Buffer still low but way behind (${latency.toFixed(1)}s), seeking to live edge`);
-                              video.currentTime = Math.max(0, liveEdge - 8); // Seek 8s before live edge for safety
+                            // If buffer is still very low (< 0.5s), seek immediately regardless of latency
+                            // Otherwise, only seek if we're behind and have some buffer
+                            if (bufferRemaining < 0.5 || (latency > 30 && bufferRemaining > 0.5)) {
+                              console.log(`Buffer still low (${bufferRemaining.toFixed(1)}s, ${latency.toFixed(1)}s behind), seeking to live edge`);
+                              video.currentTime = Math.max(0, liveEdge - 6);
+                              hls.startLoad(); // Force manifest reload
                               setTimeout(() => {
                                 video.play().catch(() => {});
                                 recoveryInProgress = false;
                               }, 500);
                             } else {
-                              // Not far enough behind or buffer too low - just wait longer
+                              // Not far enough behind - just wait and try to play
                               console.log(`Buffer still low (${bufferRemaining.toFixed(1)}s), waiting longer...`);
                               setTimeout(() => {
                                 video.play().catch(() => {});
                                 recoveryInProgress = false;
-                              }, 3000); // Wait 3 seconds for buffer to rebuild naturally
+                              }, 2000);
                             }
                           } else {
-                            // No fragments available, just wait
+                            // No fragments available, reload manifest and wait
+                            hls.startLoad();
                             setTimeout(() => {
                               video.play().catch(() => {});
                               recoveryInProgress = false;
@@ -548,7 +583,7 @@
                       }, 2000);
                     }
                   }
-                }, 2000); // Wait 2 seconds before checking buffer state
+                }, isCriticallyLow ? 500 : 2000); // Wait less time if critically low
               }
             }
           }
