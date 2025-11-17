@@ -535,7 +535,6 @@
                           const latency = liveEdge - currentTime;
                           
                           // Check if we're actually behind the live edge
-                          // If we're at or near live edge, don't seek - just wait for buffer
                           if (latency > 10) {
                             // We're behind, seek forward but not all the way to live edge
                             // Seek to a position that should have buffer (12s before live edge)
@@ -550,14 +549,40 @@
                             }, 1500);
                             return; // Exit early
                           } else {
-                            // We're at or near live edge, just wait for buffer to rebuild
-                            // Don't seek, just reload manifest and wait
-                            console.log(`At live edge (${latency.toFixed(1)}s behind), waiting for buffer to rebuild`);
+                            // We're at or near live edge with critically low buffer
+                            // Seek back slightly (15-20s) to where there should be buffer
+                            // This gives HLS.js room to build buffer before we catch up
+                            const seekBackTime = Math.max(0, liveEdge - 18);
+                            console.log(`At live edge (${latency.toFixed(1)}s behind) with low buffer, seeking back to ${seekBackTime.toFixed(1)}s to rebuild buffer`);
+                            video.currentTime = seekBackTime;
+                            // Force manifest reload and wait longer for buffer to build
                             hls.startLoad();
+                            // Wait longer when seeking back from live edge
                             setTimeout(() => {
-                              video.play().catch(() => {});
+                              // Check if buffer has built up
+                              const buffered = video.buffered;
+                              let bufferRemaining = 0;
+                              if (buffered.length > 0) {
+                                const checkTime = video.currentTime;
+                                for (let i = 0; i < buffered.length; i++) {
+                                  if (checkTime >= buffered.start(i) && checkTime < buffered.end(i)) {
+                                    bufferRemaining = buffered.end(i) - checkTime;
+                                    break;
+                                  }
+                                }
+                              }
+                              if (bufferRemaining > 5) {
+                                console.log(`Buffer rebuilt (${bufferRemaining.toFixed(1)}s), resuming playback`);
+                                video.play().catch(() => {});
+                              } else {
+                                console.log(`Buffer still low (${bufferRemaining.toFixed(1)}s), waiting longer...`);
+                                // Wait another 2 seconds
+                                setTimeout(() => {
+                                  video.play().catch(() => {});
+                                }, 2000);
+                              }
                               recoveryInProgress = false;
-                            }, 2000);
+                            }, 3000); // Wait 3 seconds for buffer to build
                             return; // Exit early
                           }
                         }
