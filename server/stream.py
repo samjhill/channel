@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import subprocess
@@ -56,8 +55,7 @@ except ImportError:
         _normalize_path = None
 
 PLAYLIST = str(resolve_playlist_path())
-HLS_DIR = Path("/app/hls")
-OUTPUT = str(HLS_DIR / "stream.m3u8")
+OUTPUT = "/app/hls/stream.m3u8"
 DEFAULT_ASSETS_ROOT = "/app/assets"
 DEFAULT_BUG_IMAGE = "branding/hbn_logo_bug.png"
 
@@ -408,21 +406,6 @@ def build_overlay_args(video_height: Optional[int]):
     return args, True
 
 
-def reset_hls_output() -> None:
-    """Remove old HLS segments so new viewers don't loop stale content."""
-    try:
-        if HLS_DIR.exists():
-            for ts_file in HLS_DIR.glob("stream*.ts"):
-                with contextlib.suppress(OSError):
-                    ts_file.unlink()
-        # Truncate playlist so new ffmpeg run writes a clean manifest
-        with open(OUTPUT, "w", encoding="utf-8") as playlist:
-            playlist.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:0\n")
-        LOGGER.debug("Reset HLS output (cleared segments and playlist)")
-    except Exception as exc:
-        LOGGER.warning("Failed to reset HLS output: %s", exc)
-
-
 def stream_file(
     src: str, expected_index: int = -1, playlist_mtime: float = 0.0
 ) -> bool:
@@ -457,9 +440,6 @@ def stream_file(
     except Exception:
         pass
     
-    if is_file_switch:
-        reset_hls_output()
-
     video_height = probe_video_height(src)
     overlay_args, has_overlay = build_overlay_args(video_height)
     cmd = [
