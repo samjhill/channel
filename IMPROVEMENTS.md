@@ -15,26 +15,6 @@ Generated: 2025-01-27
 
 **Impact**: Prevents silent failures, improves uptime
 
-### 2. File Locking for Watch Progress
-**Current Issue**: Race condition in `mark_episode_watched()` - multiple processes could overwrite each other's updates.
-
-**Improvement**:
-- Use `fcntl` (Linux) or `msvcrt` (Windows) for file locking
-- Or use a simple lock file mechanism
-- Ensure atomic writes with proper locking
-
-**Impact**: Prevents data loss, ensures watch progress consistency
-
-### 3. Validate Watch Progress on Resume
-**Current Issue**: When resuming from last watched episode, no validation that the episode still exists.
-
-**Improvement**:
-- Validate episode path exists and is readable before using for resume
-- Fall back to start of playlist if resume point is invalid
-- Log when resume point is invalid
-
-**Impact**: Prevents errors when files are deleted/moved
-
 ### 4. HLS Segment Cleanup
 **Current Issue**: Old HLS segments can accumulate if stream crashes, consuming disk space.
 
@@ -70,12 +50,10 @@ Generated: 2025-01-27
 **Impact**: Easier debugging, better error messages
 
 ### 7. Enhanced Logging & Monitoring
-**Current Issue**: Mix of `print()` and `logging`. No structured logging or metrics.
+**Current Issue**: Basic logging is in place, but could be enhanced with structured logging and metrics.
 
 **Improvement**:
-- Standardize on Python `logging` module throughout
 - Add structured logging (JSON format option)
-- Log levels: DEBUG, INFO, WARNING, ERROR
 - Add metrics: files streamed, errors, buffer stalls, etc.
 - Optional: Integration with monitoring tools (Prometheus, etc.)
 
@@ -144,7 +122,7 @@ Generated: 2025-01-27
 **Impact**: Better IDE support, catch bugs earlier
 
 ### 13. Test Coverage
-**Current**: Basic tests exist, but coverage could be improved.
+**Current**: Basic tests exist, including tests for file locking and resume validation.
 
 **Improvement**:
 - Increase test coverage (aim for 80%+)
@@ -338,41 +316,38 @@ Generated: 2025-01-27
 
 ## 🎯 Quick Wins (Easy improvements with high impact)
 
-1. **Add favicon to test client** - Fix 404 error
-2. **Remove debug print statements** - Clean up console output
-3. **Add loading spinners** - Better UX during operations
-4. **Error message improvements** - More user-friendly error messages
-5. **Add "About" page** - Show version, build info
-6. **Keyboard shortcuts in admin UI** - Faster navigation
-7. **Copy-to-clipboard for stream URL** - Easier sharing
-8. **Stream quality indicator** - Show current bitrate/quality
-9. **Episode count badges** - Show how many episodes per show
-10. **Auto-refresh playlist view** - See updates without manual refresh
+1. **Add loading spinners** - Better UX during operations
+2. **Error message improvements** - More user-friendly error messages
+3. **Add "About" page** - Show version, build info
+4. **Keyboard shortcuts in admin UI** - Faster navigation
+5. **Copy-to-clipboard for stream URL** - Easier sharing
+6. **Stream quality indicator** - Show current bitrate/quality
+7. **Episode count badges** - Show how many episodes per show
+8. **Auto-refresh playlist view** - See updates without manual refresh
 
 ## 📈 Recommended Implementation Order
 
 ### Phase 1: Reliability (Weeks 1-2)
 1. Process monitoring (#1)
-2. File locking (#2)
-3. Watch progress validation (#3)
-4. HLS segment cleanup (#4)
+2. HLS segment cleanup (#4)
+3. Better error recovery (#5)
 
 ### Phase 2: User Experience (Weeks 3-4)
-5. Configuration validation (#6)
-6. Enhanced logging (#7)
-7. Admin UI enhancements (#8)
-8. Better metadata display (#9)
+4. Configuration validation (#6)
+5. Enhanced logging & metrics (#7)
+6. Admin UI enhancements (#8)
+7. Better metadata display (#9)
 
 ### Phase 3: Features (Weeks 5-6)
-9. Playlist preview (#10)
-10. Watch progress features (#18)
-11. Client improvements (#20)
+8. Playlist preview (#10)
+9. Watch progress features (#18)
+10. Client improvements (#20)
 
 ### Phase 4: Polish (Weeks 7-8)
-12. Test coverage (#13)
-13. Documentation (#14)
-14. Code quality (#15)
-15. Quick wins
+11. Test coverage expansion (#13)
+12. Documentation (#14)
+13. Code quality (#15)
+14. Quick wins
 
 ## 💡 Future Considerations
 
