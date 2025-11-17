@@ -12,6 +12,7 @@ import ChannelSettingsForm from "./components/ChannelSettingsForm";
 import ShowDiscovery from "./components/ShowDiscovery";
 import ShowTable from "./components/ShowTable";
 import PlaylistManager from "./components/PlaylistManager";
+import BumperManager from "./components/BumperManager";
 import SaveBar from "./components/SaveBar";
 
 function cloneChannel(channel: ChannelConfig | null): ChannelConfig | null {
@@ -28,7 +29,7 @@ function App() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [activeView, setActiveView] = useState<"settings" | "playlist">("playlist");
+  const [activeView, setActiveView] = useState<"settings" | "playlist" | "bumpers">("playlist");
 
   useEffect(() => {
     fetchChannels()
@@ -193,6 +194,12 @@ function App() {
           >
             Playlist Management
           </button>
+          <button
+            className={`tab-button ${activeView === "bumpers" ? "active" : ""}`}
+            onClick={() => setActiveView("bumpers")}
+          >
+            Bumper Management
+          </button>
         </div>
       </header>
       <main className="app-content">
@@ -227,7 +234,10 @@ function App() {
         {!loading && currentChannel && activeView === "playlist" && (
           <PlaylistManager channelId={currentChannel.id} active={activeView === "playlist"} />
         )}
-        {!loading && !currentChannel && (
+        {!loading && activeView === "bumpers" && (
+          <BumperManager />
+        )}
+        {!loading && !currentChannel && activeView !== "bumpers" && (
           <div className="card">Select a channel to manage its settings.</div>
         )}
       </main>

@@ -4,6 +4,7 @@ FastAPI application exposing channel configuration management endpoints.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from pathlib import Path
@@ -22,6 +23,17 @@ from .settings_service import (
     normalize_show,
     replace_channel,
     slugify,
+)
+
+# Import sassy config helpers
+import sys
+from pathlib import Path
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from scripts.bumpers.render_sassy_card import (
+    resolve_sassy_config_path,
+    load_sassy_config,
 )
 from ..playlist_service import (
     build_playlist_segments,
@@ -508,6 +520,66 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
 
     # Return updated snapshot
     return build_playlist_snapshot(channel_id, 25)
+
+
+class SassyConfigUpdate(BaseModel):
+    enabled: Optional[bool] = None
+    duration_seconds: Optional[float] = None
+    music_volume: Optional[float] = None
+    probability_between_episodes: Optional[float] = None
+    style: Optional[str] = None
+    messages: Optional[List[str]] = None
+
+
+@app.get("/api/bumpers/sassy")
+def get_sassy_config() -> Dict[str, Any]:
+    """Get the current sassy messages configuration."""
+    try:
+        config = load_sassy_config()
+        return config
+    except Exception as e:
+        LOGGER.error("Failed to load sassy config: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to load config: {str(e)}")
+
+
+@app.put("/api/bumpers/sassy")
+def update_sassy_config(update: SassyConfigUpdate) -> Dict[str, Any]:
+    """Update the sassy messages configuration."""
+    try:
+        config_path = resolve_sassy_config_path()
+        
+        # Load current config
+        current_config = load_sassy_config()
+        
+        # Apply updates
+        if update.enabled is not None:
+            current_config["enabled"] = update.enabled
+        if update.duration_seconds is not None:
+            current_config["duration_seconds"] = update.duration_seconds
+        if update.music_volume is not None:
+            current_config["music_volume"] = max(0.0, min(1.0, update.music_volume))
+        if update.probability_between_episodes is not None:
+            current_config["probability_between_episodes"] = max(
+                0.0, min(1.0, update.probability_between_episodes)
+            )
+        if update.style is not None:
+            current_config["style"] = update.style
+        if update.messages is not None:
+            # Filter out empty messages
+            current_config["messages"] = [msg for msg in update.messages if msg.strip()]
+        
+        # Ensure config directory exists
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Write updated config
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(current_config, f, indent=2, ensure_ascii=False)
+        
+        LOGGER.info("Updated sassy config at %s", config_path)
+        return current_config
+    except Exception as e:
+        LOGGER.error("Failed to update sassy config: %s", e)
+        raise HTTPException(status_code=500, detail=f"Failed to update config: {str(e)}")
 
 
 def build_playlist_snapshot(channel_id: str, limit: int) -> Dict[str, Any]:

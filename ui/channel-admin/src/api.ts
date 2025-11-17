@@ -131,3 +131,28 @@ export async function skipCurrentEpisode(channelId: string): Promise<PlaylistSna
   return handleResponse<PlaylistSnapshot>(res);
 }
 
+export interface SassyConfig {
+  enabled: boolean;
+  duration_seconds: number;
+  music_volume: number;
+  probability_between_episodes: number;
+  style: string;
+  messages: string[];
+}
+
+export async function fetchSassyConfig(): Promise<SassyConfig> {
+  const res = await fetch(`${API_BASE}/api/bumpers/sassy`);
+  return handleResponse<SassyConfig>(res);
+}
+
+export async function updateSassyConfig(
+  config: Partial<SassyConfig>
+): Promise<SassyConfig> {
+  const res = await fetch(`${API_BASE}/api/bumpers/sassy`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config)
+  });
+  return handleResponse<SassyConfig>(res);
+}
+
