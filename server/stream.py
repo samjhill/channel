@@ -178,12 +178,27 @@ def _resolve_bumper_block(current_index: int, files: List[str]) -> Optional[Any]
         except Exception:
             pass
         
-        # Generate the block
+        # FIRST: Try to get a pre-generated block (fast, non-blocking)
+        block = generator.get_pregenerated_block(
+            up_next_bumper=up_next_bumper,
+            sassy_card=sassy_card,
+            network_bumper=network_bumper,
+            weather_bumper=weather_bumper,
+        )
+        
+        if block:
+            LOGGER.info("Using pre-generated bumper block")
+            return block
+        
+        # FALLBACK: Generate a fast block without music (non-blocking)
+        # This ensures we don't hang the stream waiting for FFmpeg
+        LOGGER.warning("No pre-generated block available, generating fast block without music")
         block = generator.generate_block(
             up_next_bumper=up_next_bumper,
             sassy_card=sassy_card,
             network_bumper=network_bumper,
             weather_bumper=weather_bumper,
+            skip_music=True,  # Skip music to avoid blocking
         )
         
         return block
@@ -786,17 +801,19 @@ def run_stream():
                 if playhead_index >= 0 and playhead_index < len(files):
                     if playhead_index != next_index:
                         # Playhead points to a different file - use it (this handles skip commands)
+                        old_index = next_index
                         next_index = playhead_index
                         playhead_updated_externally = True
                         LOGGER.info(
                             "Using playhead index %d instead of calculated index %d: %s",
                             playhead_index,
-                            next_index if not playhead_updated_externally else "N/A",
+                            old_index,
                             files[playhead_index] if playhead_index < len(files) else "invalid"
                         )
             
             # Determine the normal next file to stream (may have been overridden by playhead above)
             normal_next_src = files[next_index]
+            src = normal_next_src  # Initialize src to normal_next_src
 
             # Additional check: if playhead path differs from what we're about to stream, verify it
             if playhead_state and playhead_state.get("current_path"):
@@ -879,8 +896,8 @@ def run_stream():
                     )
 
             if not playhead_updated_externally:
-                # Normal flow - use calculated next_index
-                src = normal_next_src
+                # Normal flow - use calculated next_index (src already set above)
+                pass
 
             # Handle bumper block markers - generate or use pre-generated block
             if is_bumper_block(src):

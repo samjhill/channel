@@ -531,7 +531,7 @@ def render_network_brand_bumper(
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
-        
+
         # Generate frames
         frames_generated = 0
         for idx in range(num_frames):
@@ -584,11 +584,10 @@ def render_network_brand_bumper(
             try:
                 frame = Image.open(frame_png).convert("RGBA")
                 frame = add_grain(frame, opacity=0.10, rng=rng)
-                
+
                 # Save final frame
                 frame.convert("RGB").save(frame_png, "PNG")
-                frames_generated += 1
-
+                
                 # Validate frame is not all black (unless it's during fade out)
                 if t < fade_out_start:
                     extrema = frame.getextrema()
@@ -596,6 +595,8 @@ def render_network_brand_bumper(
                         raise RuntimeError(f"Frame {idx} is all black (time={t:.2f}s)")
             except Exception as e:
                 raise RuntimeError(f"Failed to process frame {idx}: {e}") from e
+            
+            frames_generated += 1
 
         # Validate all frames were generated
         if frames_generated != num_frames:

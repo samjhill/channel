@@ -9,6 +9,7 @@ import os
 import random
 import threading
 import time
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -41,6 +42,30 @@ class BumperBlockGenerator:
         self._stop_pregen = threading.Event()
         self._blocks_dir = Path(BLOCKS_DIR)
         self._blocks_dir.mkdir(parents=True, exist_ok=True)
+        # Cache for pre-generated blocks, keyed by spec hash
+        self._pregenerated_blocks: Dict[str, BumperBlock] = {}
+    
+    def _spec_hash(self, up_next_bumper: Optional[str], sassy_card: Optional[str], 
+                   network_bumper: Optional[str], weather_bumper: Optional[str]) -> str:
+        """Generate a hash for a block specification."""
+        spec_str = f"{up_next_bumper}|{sassy_card}|{network_bumper}|{weather_bumper}"
+        return hashlib.md5(spec_str.encode()).hexdigest()
+    
+    def get_pregenerated_block(
+        self,
+        up_next_bumper: Optional[str] = None,
+        sassy_card: Optional[str] = None,
+        network_bumper: Optional[str] = None,
+        weather_bumper: Optional[str] = None,
+    ) -> Optional[BumperBlock]:
+        """Retrieve a pre-generated block matching the spec, if available."""
+        spec_hash = self._spec_hash(up_next_bumper, sassy_card, network_bumper, weather_bumper)
+        with self._pregen_lock:
+            if spec_hash in self._pregenerated_blocks:
+                block = self._pregenerated_blocks.pop(spec_hash)
+                LOGGER.info(f"Retrieved pre-generated bumper block {spec_hash}")
+                return block
+        return None
     
     def generate_block(
         self,
@@ -49,6 +74,7 @@ class BumperBlockGenerator:
         network_bumper: Optional[str] = None,
         weather_bumper: Optional[str] = None,
         music_track: Optional[str] = None,
+        skip_music: bool = False,
     ) -> Optional[BumperBlock]:
         """
         Generate a bumper block with the specified bumpers and shared music.
@@ -103,8 +129,8 @@ class BumperBlockGenerator:
         if not bumpers:
             return None
         
-        # Pick music track if not provided
-        if not music_track:
+        # Pick music track if not provided and not skipping music
+        if not skip_music and not music_track:
             music_track = self._pick_music_track()
             if not music_track:
                 LOGGER.warning("No music tracks available, generating block without music")
@@ -112,31 +138,32 @@ class BumperBlockGenerator:
         # Generate block ID
         block_id = f"block_{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
         
-        # Add music to each bumper in the block
+        # Add music to each bumper in the block (or use originals if skipping music)
         block_bumpers = []
         for bumper_path in bumpers:
             if not bumper_path or not os.path.exists(bumper_path):
                 continue
             
-            # Create output path for bumper with music
-            bumper_name = Path(bumper_path).stem
-            output_path = self._blocks_dir / f"{block_id}_{bumper_name}.mp4"
-            
-            try:
-                if music_track:
-                    self._add_music_to_bumper(bumper_path, str(output_path), music_track)
-                else:
-                    # No music, just copy
-                    import shutil
-                    shutil.copy2(bumper_path, output_path)
+            if skip_music or not music_track:
+                # Fast path: use original bumper without music
+                block_bumpers.append(bumper_path)
+            else:
+                # Slow path: add music (only for pre-generation)
+                bumper_name = Path(bumper_path).stem
+                output_path = self._blocks_dir / f"{block_id}_{bumper_name}.mp4"
                 
-                if os.path.exists(output_path):
-                    block_bumpers.append(str(output_path))
-            except Exception as e:
-                LOGGER.error(f"Failed to add music to bumper {bumper_path}: {e}")
-                # Fallback: use original bumper
-                if os.path.exists(bumper_path):
-                    block_bumpers.append(bumper_path)
+                try:
+                    self._add_music_to_bumper(bumper_path, str(output_path), music_track)
+                    if os.path.exists(output_path):
+                        block_bumpers.append(str(output_path))
+                    else:
+                        # Fallback: use original
+                        block_bumpers.append(bumper_path)
+                except Exception as e:
+                    LOGGER.error(f"Failed to add music to bumper {bumper_path}: {e}")
+                    # Fallback: use original bumper
+                    if os.path.exists(bumper_path):
+                        block_bumpers.append(bumper_path)
         
         if not block_bumpers:
             return None
@@ -210,8 +237,19 @@ class BumperBlockGenerator:
             
             if block_spec:
                 try:
-                    self.generate_block(**block_spec)
-                    LOGGER.debug(f"Pre-generated bumper block: {block_spec.get('block_id', 'unknown')}")
+                    # Generate block with music (for pre-generation)
+                    block = self.generate_block(**block_spec, skip_music=False)
+                    if block:
+                        # Store in cache for later retrieval
+                        spec_hash = self._spec_hash(
+                            block_spec.get("up_next_bumper"),
+                            block_spec.get("sassy_card"),
+                            block_spec.get("network_bumper"),
+                            block_spec.get("weather_bumper"),
+                        )
+                        with self._pregen_lock:
+                            self._pregenerated_blocks[spec_hash] = block
+                        LOGGER.info(f"Pre-generated bumper block {spec_hash} (cache size: {len(self._pregenerated_blocks)})")
                 except Exception as e:
                     LOGGER.error(f"Failed to pre-generate bumper block: {e}")
             else:

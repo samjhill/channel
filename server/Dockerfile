@@ -12,7 +12,8 @@ RUN pip3 install --no-cache-dir watchdog pillow numpy fastapi uvicorn[standard]
 
 WORKDIR /app
 
-COPY server/generate_playlist.py server/stream.py server/entrypoint.sh server/process_monitor.py ./
+COPY server/stream.py server/entrypoint.sh server/process_monitor.py ./
+COPY server/generate_playlist.py /app/server/generate_playlist.py
 COPY server/playlist_service.py /app/playlist_service.py
 COPY server/__init__.py /app/server/__init__.py
 COPY server/playlist_service.py /app/server/playlist_service.py
