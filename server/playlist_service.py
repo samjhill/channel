@@ -289,20 +289,46 @@ def build_playlist_segments(entries: Sequence[str]) -> List[Dict[str, Any]]:
     return segments
 
 
+# Cache for path normalization to avoid repeated string operations
+_path_normalization_cache: Dict[str, str] = {}
+_MAX_PATH_CACHE_SIZE = 5000
+
+
 def _normalize_path(path: str) -> str:
     """Normalize path for comparison, handling container vs host path differences.
 
     Normalizes both container paths (/media/tvchannel/...) and host paths
     (/Volumes/media/tv/...) to a canonical form for comparison.
+    Uses caching to avoid repeated string operations.
     """
+    global _path_normalization_cache
+
     if not path:
         return path
+
+    # Check cache first
+    if path in _path_normalization_cache:
+        return _path_normalization_cache[path]
+
+    # Normalize the path
+    normalized = path
     # Convert container paths to host paths for comparison
     # /media/tvchannel/... -> /Volumes/media/tv/...
     if path.startswith("/media/tvchannel/"):
-        return path.replace("/media/tvchannel/", "/Volumes/media/tv/", 1)
+        normalized = path.replace("/media/tvchannel/", "/Volumes/media/tv/", 1)
     # Keep host paths as-is (they're already in canonical form)
-    return path
+
+    # Cache the result (with size limit to prevent memory issues)
+    if len(_path_normalization_cache) >= _MAX_PATH_CACHE_SIZE:
+        # Remove oldest 10% of entries
+        keys_to_remove = list(_path_normalization_cache.keys())[
+            : _MAX_PATH_CACHE_SIZE // 10
+        ]
+        for key in keys_to_remove:
+            del _path_normalization_cache[key]
+
+    _path_normalization_cache[path] = normalized
+    return normalized
 
 
 def find_segment_index_for_entry(
@@ -461,8 +487,8 @@ def save_watch_progress(progress: Dict[str, Any]) -> None:
     _watch_progress_cache = progress
 
 
-def mark_episode_watched(episode_path: str) -> None:
-    """Mark an episode as watched."""
+def mark_episode_watched(episode_path: str, max_entries: int = 10000) -> None:
+    """Mark an episode as watched. Automatically cleans up old entries if max_entries exceeded."""
     progress = load_watch_progress()
     if "episodes" not in progress:
         progress["episodes"] = {}
@@ -472,6 +498,24 @@ def mark_episode_watched(episode_path: str) -> None:
         "watched_at": time.time(),
     }
     progress["last_watched"] = episode_path
+
+    # Clean up old entries if we exceed max_entries to prevent file growth
+    if len(progress["episodes"]) > max_entries:
+        # Sort by watched_at timestamp and keep only the most recent entries
+        episodes = progress["episodes"]
+        sorted_episodes = sorted(
+            episodes.items(),
+            key=lambda x: x[1].get("watched_at", 0.0),
+            reverse=True,
+        )
+        # Keep the most recent max_entries entries
+        progress["episodes"] = dict(sorted_episodes[:max_entries])
+        # Ensure last_watched is still in the dict
+        if episode_path not in progress["episodes"]:
+            progress["episodes"][episode_path] = {
+                "watched": True,
+                "watched_at": time.time(),
+            }
 
     save_watch_progress(progress)
 

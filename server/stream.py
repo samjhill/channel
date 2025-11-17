@@ -97,7 +97,9 @@ BUG_MARGIN = get_int_env("HBN_BUG_MARGIN", 40)
 BUG_POSITION = os.environ.get("HBN_BUG_POSITION", "top-right").lower()
 
 # Cache for video height probing (expensive operation)
+# Limited to 1000 entries to prevent memory leaks
 _video_height_cache: Dict[str, Optional[int]] = {}
+_MAX_VIDEO_HEIGHT_CACHE_SIZE = 1000
 
 
 def load_playlist():
@@ -147,13 +149,23 @@ def probe_video_height(src: str) -> Optional[int]:
             capture_output=True,
             text=True,
             check=True,
+            timeout=5,  # Add timeout to prevent hanging on corrupted files
         )
         height_str = result.stdout.strip()
         height = int(height_str) if height_str else None
-    except (subprocess.CalledProcessError, ValueError):
+    except (subprocess.CalledProcessError, ValueError, subprocess.TimeoutExpired):
         height = None
 
     # Cache the result (even if None to avoid repeated failures)
+    # Limit cache size to prevent memory leaks
+    if len(_video_height_cache) >= _MAX_VIDEO_HEIGHT_CACHE_SIZE:
+        # Remove oldest 20% of entries (simple FIFO-style cleanup)
+        keys_to_remove = list(_video_height_cache.keys())[
+            : _MAX_VIDEO_HEIGHT_CACHE_SIZE // 5
+        ]
+        for key in keys_to_remove:
+            del _video_height_cache[key]
+
     _video_height_cache[src] = height
     return height
 
@@ -426,6 +438,9 @@ def record_playhead(src: str, index: int, playlist_mtime: float) -> None:
 def run_stream():
     last_played: Optional[str] = None
     next_index = 0
+    # Cache valid files to avoid repeated file existence checks
+    _valid_files_cache: Dict[str, bool] = {}
+    _last_playlist_hash: Optional[int] = None
 
     while True:
         try:
@@ -440,15 +455,33 @@ def run_stream():
             time.sleep(10)
             continue
 
+        # Check if playlist changed (simple hash check)
+        playlist_hash = hash(tuple(files))
+        if playlist_hash != _last_playlist_hash:
+            # Playlist changed, rebuild cache
+            _valid_files_cache.clear()
+            _last_playlist_hash = playlist_hash
+
         # Validate playlist entries are valid files before processing
+        # Use cache to avoid repeated os.path.exists calls
         valid_files = []
         for file_path in files:
-            if os.path.exists(file_path) and os.path.isfile(file_path):
-                valid_files.append(file_path)
+            # Check cache first
+            if file_path in _valid_files_cache:
+                if _valid_files_cache[file_path]:
+                    valid_files.append(file_path)
+                # If cached as invalid, skip it
             else:
-                print(
-                    f"WARNING: Skipping invalid playlist entry: {file_path}", flush=True
-                )
+                # Not in cache, check file existence
+                is_valid = os.path.exists(file_path) and os.path.isfile(file_path)
+                _valid_files_cache[file_path] = is_valid
+                if is_valid:
+                    valid_files.append(file_path)
+                else:
+                    print(
+                        f"WARNING: Skipping invalid playlist entry: {file_path}",
+                        flush=True,
+                    )
 
         if not valid_files:
             print("No valid files in playlist, waiting...", flush=True)
