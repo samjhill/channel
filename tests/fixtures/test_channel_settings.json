@@ -1,0 +1,30 @@
+{
+  "channels": [
+    {
+      "id": "test-channel",
+      "name": "Test Channel",
+      "enabled": true,
+      "media_root": "/tmp/test_media",
+      "playback_mode": "sequential",
+      "loop_entire_library": true,
+      "shows": [
+        {
+          "id": "show-1",
+          "label": "Test Show",
+          "path": "Test Show",
+          "include": true,
+          "playback_mode": "inherit",
+          "weight": 1.0
+        }
+      ],
+      "bumpers": {
+        "enable_up_next": true,
+        "enable_intermission": true
+      },
+      "branding": {
+        "show_bug_overlay": true
+      }
+    }
+  ]
+}
+
