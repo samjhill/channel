@@ -1,0 +1,9 @@
+.git
+.venv
+node_modules
+ui/channel-admin/node_modules
+client/web_test/node_modules
+server/hls
+__pycache__
+*.pyc
+

@@ -58,13 +58,55 @@ class BumperBlockGenerator:
         network_bumper: Optional[str] = None,
         weather_bumper: Optional[str] = None,
     ) -> Optional[BumperBlock]:
-        """Retrieve a pre-generated block matching the spec, if available."""
+        """Retrieve a pre-generated block matching the spec, if available.
+        
+        If sassy_card is None, tries to match any block with the same up_next_bumper.
+        This allows using pre-generated blocks even if the sassy card was drawn differently.
+        """
+        # First try exact match
         spec_hash = self._spec_hash(up_next_bumper, sassy_card, network_bumper, weather_bumper)
         with self._pregen_lock:
             if spec_hash in self._pregenerated_blocks:
                 block = self._pregenerated_blocks.pop(spec_hash)
-                LOGGER.info(f"Retrieved pre-generated bumper block {spec_hash}")
+                LOGGER.info(f"Retrieved pre-generated bumper block (exact match) {spec_hash}")
                 return block
+            
+            # If sassy_card is None, try to find any block with matching up_next_bumper
+            # This allows us to use pre-generated blocks even if sassy card differs
+            if sassy_card is None and up_next_bumper:
+                # First try matching by hash with None for sassy (in case block was queued that way)
+                test_hash = self._spec_hash(up_next_bumper, None, None, weather_bumper if weather_bumper else None)
+                if test_hash in self._pregenerated_blocks:
+                    block = self._pregenerated_blocks.pop(test_hash)
+                    LOGGER.info(f"Retrieved pre-generated bumper block (hash match with None sassy) {test_hash}")
+                    return block
+                
+                # Try with just up_next (no weather)
+                test_hash = self._spec_hash(up_next_bumper, None, None, None)
+                if test_hash in self._pregenerated_blocks:
+                    block = self._pregenerated_blocks.pop(test_hash)
+                    LOGGER.info(f"Retrieved pre-generated bumper block (hash match up_next only) {test_hash}")
+                    return block
+                
+                # Iterate through all pre-generated blocks to find one with matching up_next
+                # Check the block's actual bumpers list to see if it contains our up_next_bumper
+                for cached_hash, cached_block in list(self._pregenerated_blocks.items()):
+                    if cached_block and cached_block.bumpers:
+                        # Check if this block contains our up_next_bumper
+                        # The up_next_bumper should be in the bumpers list (typically 3rd position)
+                        if up_next_bumper in cached_block.bumpers:
+                            block = self._pregenerated_blocks.pop(cached_hash)
+                            LOGGER.info(f"Retrieved pre-generated bumper block (up_next match in bumpers) {cached_hash}")
+                            return block
+                
+                # Last resort: return the first available block (FIFO)
+                # This ensures we use pre-generated blocks rather than generating new ones
+                if self._pregenerated_blocks:
+                    first_hash = next(iter(self._pregenerated_blocks.keys()))
+                    block = self._pregenerated_blocks.pop(first_hash)
+                    LOGGER.info(f"Retrieved pre-generated bumper block (first available) {first_hash}")
+                    return block
+        
         return None
     
     def generate_block(
@@ -116,15 +158,52 @@ class BumperBlockGenerator:
             except Exception:
                 weather_bumper = None
         
-        # Collect all valid bumpers
-        if up_next_bumper and os.path.exists(up_next_bumper):
-            bumpers.append(up_next_bumper)
-        if sassy_card and os.path.exists(sassy_card):
+        sassy_exists = sassy_card and os.path.exists(sassy_card)
+        weather_exists = weather_bumper and os.path.exists(weather_bumper)
+        up_next_exists = up_next_bumper and os.path.exists(up_next_bumper)
+        network_exists = network_bumper and os.path.exists(network_bumper)
+
+        if not (sassy_exists and weather_exists and up_next_exists):
+            LOGGER.warning(
+                "Incomplete bumper block spec (sassy=%s, weather=%s, up_next=%s) - skipping block",
+                bool(sassy_exists),
+                bool(weather_exists),
+                bool(up_next_exists),
+            )
+            return None
+
+        # Collect all valid bumpers in the correct order:
+        # 1. Sassy card (exactly one)
+        # 2. Weather bumper
+        # 3. Up next bumper
+        # 4. Network bumper (optional, at the end)
+        # Ensure we only add each bumper once and in the correct order
+        if sassy_exists:
             bumpers.append(sassy_card)
-        if network_bumper and os.path.exists(network_bumper):
-            bumpers.append(network_bumper)
-        if weather_bumper and os.path.exists(weather_bumper):
+        if weather_exists:
             bumpers.append(weather_bumper)
+        if up_next_exists:
+            bumpers.append(up_next_bumper)
+        if network_exists:
+            bumpers.append(network_bumper)
+        
+        # Sanity check: ensure we don't have duplicate sassy cards
+        sassy_count = sum(1 for b in bumpers if b and "/bumpers/sassy/" in b)
+        if sassy_count > 1:
+            LOGGER.error(f"ERROR: Block has {sassy_count} sassy cards! This should never happen. Bumpers: {bumpers}")
+            # Remove duplicate sassy cards, keep only the first one
+            seen_sassy = False
+            filtered_bumpers = []
+            for b in bumpers:
+                if b and "/bumpers/sassy/" in b:
+                    if not seen_sassy:
+                        filtered_bumpers.append(b)
+                        seen_sassy = True
+                    # Skip duplicate sassy cards
+                else:
+                    filtered_bumpers.append(b)
+            bumpers = filtered_bumpers
+            LOGGER.warning(f"Fixed duplicate sassy cards. New bumpers: {bumpers}")
         
         if not bumpers:
             return None

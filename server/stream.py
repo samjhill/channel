@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 LOGGER = logging.getLogger(__name__)
 
@@ -136,8 +136,13 @@ def _resolve_bumper_block(current_index: int, files: List[str]) -> Optional[Any]
     try:
         from server.bumper_block import get_generator
         from server.generate_playlist import (
-            SASSY_CARDS, NETWORK_BUMPERS, load_weather_config, WEATHER_BUMPER_MARKER,
-            find_existing_bumper, extract_episode_metadata
+            SASSY_CARDS,
+            load_weather_config,
+            WEATHER_BUMPER_MARKER,
+            find_existing_bumper,
+            extract_episode_metadata,
+            ensure_bumper,
+            infer_show_title_from_path,
         )
         import random
         
@@ -157,46 +162,62 @@ def _resolve_bumper_block(current_index: int, files: List[str]) -> Optional[Any]
             next_episode = files[next_episode_index]
             if os.path.exists(next_episode):
                 # Extract show info from episode path
-                from server.generate_playlist import infer_show_title_from_path
                 show_label = infer_show_title_from_path(next_episode)
                 metadata = extract_episode_metadata(next_episode)
                 up_next_bumper = find_existing_bumper(show_label, metadata)
         
-        sassy_card = SASSY_CARDS.draw_card()
-        network_bumper = NETWORK_BUMPERS.draw_bumper()
+        # Always ensure we have an up-next bumper before building the block
+        if not up_next_bumper and next_episode_index < len(files):
+            try:
+                metadata = extract_episode_metadata(files[next_episode_index])
+                show_label = infer_show_title_from_path(files[next_episode_index])
+                up_next_bumper = ensure_bumper(show_label, metadata)
+            except Exception:
+                up_next_bumper = None
         
         weather_bumper = None
         try:
             weather_cfg = load_weather_config()
             if weather_cfg.get("enabled", False):
-                weather_prob = weather_cfg.get("probability_between_episodes", 0.0)
-                if weather_prob > 0 and random.random() <= weather_prob:
-                    # Render weather bumper JIT
-                    weather_path = _render_weather_bumper_jit()
-                    if weather_path:
-                        weather_bumper = weather_path
+                # Weather bumpers are required for each block per product spec
+                weather_path = _render_weather_bumper_jit()
+                if weather_path:
+                    weather_bumper = weather_path
         except Exception:
             pass
         
-        # FIRST: Try to get a pre-generated block (fast, non-blocking)
+        # FIRST: Try to get ANY pre-generated block that matches up_next and weather
+        # Don't specify sassy_card so we can match any pre-generated block
+        # The pre-generated block will have the correct sassy card from when it was queued
         block = generator.get_pregenerated_block(
             up_next_bumper=up_next_bumper,
-            sassy_card=sassy_card,
-            network_bumper=network_bumper,
+            sassy_card=None,  # Try to match any sassy card
+            network_bumper=None,
             weather_bumper=weather_bumper,
         )
+        
+        # If exact match failed, try to get any block with matching up_next (ignore sassy/weather)
+        if not block and up_next_bumper:
+            # Try with None for sassy and weather to get any matching block
+            block = generator.get_pregenerated_block(
+                up_next_bumper=up_next_bumper,
+                sassy_card=None,
+                network_bumper=None,
+                weather_bumper=None,
+            )
         
         if block:
             LOGGER.info("Using pre-generated bumper block")
             return block
         
         # FALLBACK: Generate a fast block without music (non-blocking)
-        # This ensures we don't hang the stream waiting for FFmpeg
+        # Draw a sassy card only when we need to generate a new block
+        sassy_card = SASSY_CARDS.draw_card()
         LOGGER.warning("No pre-generated block available, generating fast block without music")
         block = generator.generate_block(
             up_next_bumper=up_next_bumper,
             sassy_card=sassy_card,
-            network_bumper=network_bumper,
+            network_bumper=None,
             weather_bumper=weather_bumper,
             skip_music=True,  # Skip music to avoid blocking
         )
@@ -560,9 +581,8 @@ def stream_file(
                         return False  # Stream was interrupted
                     else:
                         LOGGER.debug(
-                            "Skip check failed - mtime_match=%s, recent_update=%s, playhead_mtime=%s, playlist_mtime=%s, updated_at=%s, current_time=%s",
+                            "Skip check failed - mtime_match=%s, playhead_mtime=%s, playlist_mtime=%s, updated_at=%s, current_time=%s",
                             mtime_match,
-                            recent_update,
                             playhead_mtime,
                             playlist_mtime,
                             playhead_updated_at,
@@ -742,27 +762,64 @@ def run_stream():
                 else:
                     path_matches = playhead_path == files[playhead_index] if playhead_index < len(files) else False
                 
-                # Use playhead index if path matches OR if mtime is close (playlist might have shifted slightly)
-                mtime_match = abs(playhead_mtime - playlist_mtime) < 5.0  # 5 second tolerance
-                if path_matches or mtime_match:
+                # CRITICAL: Check if playhead index points to a marker (BUMPER_BLOCK or WEATHER_BUMPER)
+                # If so, and the playhead path is a real file, search for the file instead of using the marker index
+                at_index_is_marker = (
+                    is_bumper_block(files[playhead_index]) if playhead_index < len(files) else False
+                ) or (
+                    is_weather_bumper(files[playhead_index]) if playhead_index < len(files) else False
+                )
+                
+                if at_index_is_marker and playhead_path:
+                    # Playhead index points to a marker, but path is a real file - search for it
+                    try:
+                        if _normalize_path:
+                            normalized_playhead = _normalize_path(playhead_path)
+                            for idx, file_path in enumerate(files):
+                                if not is_bumper_block(file_path) and not is_weather_bumper(file_path):
+                                    if _normalize_path(file_path) == normalized_playhead:
+                                        next_index = idx
+                                        LOGGER.info("Playhead index pointed to marker, found actual file at index %d (was %d)", next_index, playhead_index)
+                                        break
+                            else:
+                                # File not found, start from beginning
+                                next_index = 0
+                                LOGGER.warning("Playhead index pointed to marker, but file not found in playlist, starting from beginning")
+                        else:
+                            try:
+                                next_index = files.index(playhead_path)
+                                LOGGER.info("Playhead index pointed to marker, found actual file at index %d (was %d)", next_index, playhead_index)
+                            except ValueError:
+                                next_index = 0
+                                LOGGER.warning("Playhead index pointed to marker, but file not found in playlist, starting from beginning")
+                    except (ValueError, AttributeError):
+                        next_index = 0
+                elif path_matches:
+                    # Path matches, use playhead index
                     next_index = playhead_index
                     LOGGER.info("Resuming from playhead: index %d (%s)", next_index, files[next_index] if next_index < len(files) else "invalid")
                 else:
-                    # Playhead doesn't match, search for it
-                    try:
-                        if _normalize_path and playhead_path:
-                            normalized_playhead = _normalize_path(playhead_path)
-                            for idx, file_path in enumerate(files):
-                                if _normalize_path(file_path) == normalized_playhead:
-                                    next_index = idx
-                                    LOGGER.info("Found playhead path at index %d (was %d)", next_index, playhead_index)
-                                    break
+                    # Path doesn't match - use mtime or search
+                    mtime_match = abs(playhead_mtime - playlist_mtime) < 5.0  # 5 second tolerance
+                    if mtime_match:
+                        next_index = playhead_index
+                        LOGGER.info("Resuming from playhead: index %d (%s) - path mismatch but mtime close", next_index, files[next_index] if next_index < len(files) else "invalid")
+                    else:
+                        # Playhead doesn't match, search for it
+                        try:
+                            if _normalize_path and playhead_path:
+                                normalized_playhead = _normalize_path(playhead_path)
+                                for idx, file_path in enumerate(files):
+                                    if _normalize_path(file_path) == normalized_playhead:
+                                        next_index = idx
+                                        LOGGER.info("Found playhead path at index %d (was %d)", next_index, playhead_index)
+                                        break
+                                else:
+                                    next_index = 0
                             else:
-                                next_index = 0
-                        else:
-                            next_index = files.index(playhead_path) if playhead_path in files else 0
-                    except (ValueError, AttributeError):
-                        next_index = 0
+                                next_index = files.index(playhead_path) if playhead_path in files else 0
+                        except (ValueError, AttributeError):
+                            next_index = 0
             else:
                 # Playhead index is invalid, start from beginning or last_played
                 if last_played:
@@ -813,6 +870,18 @@ def run_stream():
             
             # Determine the normal next file to stream (may have been overridden by playhead above)
             normal_next_src = files[next_index]
+            
+            # CRITICAL: If we're about to stream a BUMPER_BLOCK but playhead points to a different index,
+            # skip the bumper block entirely and go directly to the playhead target
+            if is_bumper_block(normal_next_src) and playhead_state and playhead_state.get("current_index") is not None:
+                playhead_index = playhead_state.get("current_index", -1)
+                if playhead_index >= 0 and playhead_index < len(files) and playhead_index != next_index:
+                    # Skip the bumper block and go to playhead
+                    old_bumper_index = next_index
+                    next_index = playhead_index
+                    normal_next_src = files[next_index]
+                    LOGGER.info("Skipping bumper block at index %d, jumping to playhead index %d", old_bumper_index, playhead_index)
+            
             src = normal_next_src  # Initialize src to normal_next_src
 
             # Additional check: if playhead path differs from what we're about to stream, verify it
@@ -901,14 +970,14 @@ def run_stream():
 
             # Handle bumper block markers - generate or use pre-generated block
             if is_bumper_block(src):
-                # Check playhead first - if skip was triggered, use playhead index instead
+                # Check playhead first - if skip was triggered, skip the bumper block entirely
                 playhead_state = load_playhead_state(force_reload=True)
                 if playhead_state and playhead_state.get("current_index") is not None:
                     playhead_index = playhead_state.get("current_index", -1)
                     if playhead_index >= 0 and playhead_index < len(files) and playhead_index != next_index:
-                        # Skip was triggered, jump to playhead index
+                        # Skip was triggered, jump to playhead index and skip the bumper block
                         next_index = playhead_index
-                        LOGGER.info("Skip detected before bumper block, jumping to index %d", next_index)
+                        LOGGER.info("Skip detected before bumper block, skipping block and jumping to index %d", next_index)
                         continue  # Re-check what to stream at new index
                 
                 block = _resolve_bumper_block(next_index, files)
@@ -920,17 +989,18 @@ def run_stream():
                             LOGGER.info("Streaming bumper from block: %s", bumper_path)
                             bumper_streamed = stream_file(bumper_path, next_index, playlist_mtime)
                             if not bumper_streamed:
-                                # Stream was interrupted (skip command), check playhead for new target
+                                # Stream was interrupted (skip command), skip the rest of the block
                                 playhead_state = load_playhead_state(force_reload=True)
                                 if playhead_state and playhead_state.get("current_index") is not None:
                                     playhead_index = playhead_state.get("current_index", -1)
                                     if playhead_index >= 0 and playhead_index < len(files):
                                         next_index = playhead_index
-                                        LOGGER.info("Skip detected during bumper block, jumping to index %d", next_index)
+                                        LOGGER.info("Skip detected during bumper block, skipping rest of block and jumping to index %d", next_index)
                                         block_interrupted = True
                                         break  # Exit bumper loop, will continue with new target
                     
                     if block_interrupted:
+                        # Skip past the BUMPER_BLOCK marker and go to the playhead target
                         continue  # Re-check what to stream at new index
                     
                     # Pre-generate next bumper block while we're streaming
@@ -940,6 +1010,15 @@ def run_stream():
                     next_index += 1
                     if next_index >= len(files):
                         next_index = 0
+                    
+                    # Update playhead to the next file (skip past the BUMPER_BLOCK marker)
+                    if next_index < len(files):
+                        next_src = files[next_index]
+                        # Skip recording for weather bumpers and bumper blocks (they're temporary/markers)
+                        if not is_weather_bumper(next_src) and not is_bumper_block(next_src):
+                            record_playhead(next_src, next_index, playlist_mtime, force=True)
+                            LOGGER.info("Updated playhead after bumper block: %s (index %d)", next_src, next_index)
+                    
                     continue
                 else:
                     LOGGER.warning("Failed to resolve bumper block, skipping")

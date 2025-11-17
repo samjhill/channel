@@ -20,6 +20,7 @@ dist/
 
 # Runtime artifacts
 server/hls/
+server/config/.weather_api_key
 
 # Media assets (do not commit large binary files)
 assets/bumpers/

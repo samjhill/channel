@@ -26,7 +26,7 @@ LOGGER = logging.getLogger(__name__)
 # Process configurations
 PROCESSES = {
     "generate_playlist": {
-        "command": ["python3", "/app/generate_playlist.py"],
+        "command": ["python3", "/app/server/generate_playlist.py"],
         "restart_delay": 5,  # Initial delay in seconds
         "max_restart_delay": 300,  # Maximum delay (5 minutes)
         "restart_count": 0,

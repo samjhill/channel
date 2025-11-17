@@ -5,7 +5,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import logging
 import os
+import subprocess
 import time
 import json
 from typing import Optional
@@ -27,6 +29,11 @@ for path in _config_paths:
         break
 if CONFIG_PATH is None:
     CONFIG_PATH = _config_paths[0]  # Default to first path
+
+API_KEY_FILE = CONFIG_PATH.parent / ".weather_api_key"
+CONTAINER_PATH = Path("/app/config/.weather_api_key")
+DEFAULT_CONTAINER_NAME = os.environ.get("TVCHANNEL_CONTAINER_NAME", "tvchannel")
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -54,6 +61,59 @@ def load_weather_config() -> dict:
         return json.load(f)
 
 
+def load_stored_api_key() -> Optional[str]:
+    """Load API key from the persistent secret file if present."""
+    try:
+        if API_KEY_FILE.exists():
+            key = API_KEY_FILE.read_text(encoding="utf-8").strip()
+            return key or None
+    except Exception as exc:
+        LOGGER.warning("Failed to read weather API key file: %s", exc)
+    return None
+
+
+def store_api_key(value: str) -> None:
+    """Persist API key to the secret file."""
+    try:
+        API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        API_KEY_FILE.write_text(value.strip(), encoding="utf-8")
+        LOGGER.info("Stored weather API key at %s", API_KEY_FILE)
+    except Exception as exc:
+        LOGGER.error("Failed to store weather API key: %s", exc)
+        raise
+
+    # Best-effort sync: if running outside the container, copy the key into it
+    container_name = os.environ.get("TVCHANNEL_CONTAINER_NAME", DEFAULT_CONTAINER_NAME)
+    if container_name:
+        try:
+            if Path("/.dockerenv").exists():
+                # Already inside container; nothing to sync
+                return
+            subprocess.run(
+                [
+                    "docker",
+                    "cp",
+                    str(API_KEY_FILE),
+                    f"{container_name}:{CONTAINER_PATH}",
+                ],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=5,
+            )
+            LOGGER.info(
+                "Synced weather API key to container '%s' at %s",
+                container_name,
+                CONTAINER_PATH,
+            )
+        except Exception as exc:
+            LOGGER.warning(
+                "Unable to sync weather API key to container '%s': %s",
+                container_name,
+                exc,
+            )
+
+
 def get_current_weather() -> Optional[WeatherInfo]:
     """
     Returns current weather for the configured location, or None if disabled,
@@ -78,6 +138,10 @@ def get_current_weather() -> Optional[WeatherInfo]:
     
     api_var = cfg.get("api_key_env_var", "HBN_WEATHER_API_KEY")
     api_key = os.getenv(api_var)
+    if not api_key:
+        api_key = cfg.get("api_key")
+    if not api_key:
+        api_key = load_stored_api_key()
     if not api_key:
         return None
     

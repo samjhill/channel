@@ -8,7 +8,7 @@ RUN apt update && apt install -y \
     fonts-dejavu-core && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip3 install --no-cache-dir watchdog pillow numpy fastapi uvicorn[standard]
+RUN pip3 install --no-cache-dir watchdog pillow numpy fastapi uvicorn[standard] requests
 
 WORKDIR /app
 

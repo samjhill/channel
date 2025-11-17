@@ -35,6 +35,7 @@ from scripts.bumpers.render_sassy_card import (
     resolve_sassy_config_path,
     load_sassy_config,
 )
+from server.services import weather_service
 from ..playlist_service import (
     build_playlist_segments,
     describe_episode,
@@ -597,28 +598,17 @@ def update_sassy_config(update: SassyConfigUpdate) -> Dict[str, Any]:
 def get_weather_config() -> Dict[str, Any]:
     """Get the current weather bumper configuration."""
     try:
-        from server.services.weather_service import load_weather_config
+        import os
         
-        config = load_weather_config()
-        # Don't expose the API key if it's set via env var
-        # Only show if it's stored in config (though we prefer env vars)
-        if "api_key" in config:
-            # Mask the API key for security
-            api_key = config.get("api_key", "")
-            if api_key and len(api_key) > 8:
-                config["api_key"] = api_key[:4] + "..." + api_key[-4:]
-        else:
-            # Check if API key is set in environment
-            api_var = config.get("api_key_env_var", "HBN_WEATHER_API_KEY")
-            import os
-            api_key = os.getenv(api_var)
-            if api_key:
-                config["api_key_set"] = True
-                config["api_key"] = None  # Don't expose the actual key
-            else:
-                config["api_key_set"] = False
-                config["api_key"] = None
-        
+        config = weather_service.load_weather_config()
+        api_var = config.get("api_key_env_var", "HBN_WEATHER_API_KEY")
+        api_key_present = bool(
+            os.getenv(api_var)
+            or weather_service.load_stored_api_key()
+            or config.get("api_key")
+        )
+        config["api_key_set"] = api_key_present
+        config["api_key"] = None  # Never expose the actual key
         return config
     except Exception as e:
         LOGGER.error("Failed to load weather config: %s", e)
@@ -629,11 +619,10 @@ def get_weather_config() -> Dict[str, Any]:
 def update_weather_config(update: WeatherConfigUpdate) -> Dict[str, Any]:
     """Update the weather bumper configuration."""
     try:
-        from server.services.weather_service import load_weather_config, CONFIG_PATH
         import os
         
         # Load current config
-        current_config = load_weather_config()
+        current_config = weather_service.load_weather_config()
         
         # Apply updates
         if update.enabled is not None:
@@ -661,20 +650,20 @@ def update_weather_config(update: WeatherConfigUpdate) -> Dict[str, Any]:
             # Set environment variable (will persist for current process, but user should set in Docker/system env)
             os.environ[api_var] = api_key
             LOGGER.info("API key set via UI (for current process). For persistence, set %s as environment variable.", api_var)
-            # Note: This won't persist across restarts unless set in Docker/system config
+            weather_service.store_api_key(api_key)
         
         # Ensure config directory exists
-        CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        weather_service.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         
         # Write updated config (without API key - it should be in env var)
         config_to_save = {**current_config}
         if "api_key" in config_to_save:
             del config_to_save["api_key"]  # Don't save API key in config file
         
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(weather_service.CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(config_to_save, f, indent=2, ensure_ascii=False)
         
-        LOGGER.info("Updated weather config at %s", CONFIG_PATH)
+        LOGGER.info("Updated weather config at %s", weather_service.CONFIG_PATH)
         
         # Return updated config (without exposing API key)
         return get_weather_config()

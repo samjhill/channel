@@ -38,7 +38,7 @@ from server.bumper_block import BUMPER_BLOCK_MARKER, get_generator
 PLAYLIST_FILE = str(resolve_playlist_path())
 DEFAULT_ASSETS_ROOT = "/app/assets"
 DEFAULT_PLAYLIST_EPISODE_LIMIT = 500
-DEFAULT_PLAYLIST_SEED_LIMIT = 50
+DEFAULT_PLAYLIST_SEED_LIMIT = 12
 VIDEO_EXTENSIONS = (".mp4", ".mkv", ".mov")
 SEASON_PATTERN = re.compile(r"(?:season|series)\s*\d+", re.IGNORECASE)
 EPISODE_PATTERN = re.compile(r"S\d{1,2}E\d{1,2}.*$", re.IGNORECASE)
@@ -946,7 +946,6 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                 # Collect bumpers for this block
                 up_next = bumper_path if bumper_path else None
                 sassy = SASSY_CARDS.draw_card()
-                network = NETWORK_BUMPERS.draw_bumper()
                 weather = None
                 try:
                     weather_cfg = load_weather_config()
@@ -962,7 +961,7 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                 block_generator.queue_pregen({
                     "up_next_bumper": up_next,
                     "sassy_card": sassy,
-                    "network_bumper": network,
+                    "network_bumper": None,
                     "weather_bumper": weather,
                 })
                 

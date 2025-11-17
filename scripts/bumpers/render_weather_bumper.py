@@ -21,7 +21,10 @@ from PIL import Image, ImageDraw, ImageFont
 
 from scripts.music.add_music_to_bumper import add_random_music_to_bumper
 from scripts.bumpers.ffmpeg_utils import run_ffmpeg, validate_video_file
-from server.services.weather_service import get_current_weather, load_weather_config
+from server.services.weather_service import (
+    get_current_weather,
+    load_weather_config,
+)
 
 # Brand colors for gradient
 STEEL_BLUE = (0x47, 0x5D, 0x92)
@@ -585,6 +588,12 @@ def render_weather_bumper(
     else:
         weather = get_current_weather()
         if weather is None:
+            api_var = cfg.get("api_key_env_var", "HBN_WEATHER_API_KEY")
+            print(
+                f"[Weather] Weather bumpers are enabled but no weather data is available. "
+                f"Set the {api_var} environment variable with your API key to enable weather bumpers.",
+                file=sys.stderr,
+            )
             return False
     
     # Try fast render first (uses pre-generated backgrounds)
