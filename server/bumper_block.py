@@ -10,6 +10,7 @@ import random
 import threading
 import time
 import hashlib
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -22,6 +23,7 @@ BUMPER_BLOCK_MARKER = "BUMPER_BLOCK"
 
 # Directory for pre-generated bumper blocks
 BLOCKS_DIR = os.path.join(os.environ.get("HBN_BUMPERS_ROOT", "/media/tvchannel/bumpers"), "blocks")
+DEFAULT_BUMPER_DURATION = 6.0
 
 
 @dataclass
@@ -217,22 +219,42 @@ class BumperBlockGenerator:
         # Generate block ID
         block_id = f"block_{int(time.time() * 1000)}_{random.randint(1000, 9999)}"
         
-        # Add music to each bumper in the block (or use originals if skipping music)
-        block_bumpers = []
+        # Build bumper entries with durations for offset tracking
+        bumper_entries = []
         for bumper_path in bumpers:
             if not bumper_path or not os.path.exists(bumper_path):
                 continue
-            
+            duration = self._probe_bumper_duration(bumper_path) or DEFAULT_BUMPER_DURATION
+            bumper_entries.append((bumper_path, duration))
+        if not bumper_entries:
+            return None
+        
+        total_duration = sum(duration for _, duration in bumper_entries)
+        track_duration = self._probe_audio_duration(music_track) if music_track else None
+        needs_loop = (
+            not track_duration or track_duration + 0.25 < total_duration
+        )
+        
+        # Add music to each bumper in the block (or use originals if skipping music)
+        block_bumpers = []
+        cumulative_offset = 0.0
+        for bumper_path, duration in bumper_entries:
             if skip_music or not music_track:
-                # Fast path: use original bumper without music
                 block_bumpers.append(bumper_path)
             else:
-                # Slow path: add music (only for pre-generation)
                 bumper_name = Path(bumper_path).stem
                 output_path = self._blocks_dir / f"{block_id}_{bumper_name}.mp4"
                 
                 try:
-                    self._add_music_to_bumper(bumper_path, str(output_path), music_track)
+                    self._add_music_to_bumper(
+                        bumper_path,
+                        str(output_path),
+                        music_track,
+                        music_volume=0.2,
+                        start_offset=cumulative_offset,
+                        segment_duration=duration,
+                        loop_track=needs_loop,
+                    )
                     if os.path.exists(output_path):
                         block_bumpers.append(str(output_path))
                     else:
@@ -243,6 +265,7 @@ class BumperBlockGenerator:
                     # Fallback: use original bumper
                     if os.path.exists(bumper_path):
                         block_bumpers.append(bumper_path)
+            cumulative_offset += duration
         
         if not block_bumpers:
             return None
@@ -272,14 +295,74 @@ class BumperBlockGenerator:
         output_path: str,
         music_track: str,
         music_volume: float = 0.2,
+        start_offset: float = 0.0,
+        segment_duration: Optional[float] = None,
+        loop_track: bool = True,
     ) -> None:
         """Add music to a bumper using a specific track."""
         try:
             from scripts.music.add_music_to_bumper import add_music_to_bumper
-            add_music_to_bumper(bumper_path, output_path, music_track, music_volume)
+            add_music_to_bumper(
+                bumper_path,
+                output_path,
+                music_track,
+                music_volume,
+                start_offset=start_offset,
+                segment_duration=segment_duration,
+                loop_track=loop_track,
+            )
         except Exception as e:
             LOGGER.error(f"Failed to add music to bumper: {e}")
             raise
+
+    def _probe_bumper_duration(self, bumper_path: str) -> Optional[float]:
+        """Get the duration of a bumper video in seconds."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    bumper_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            )
+            value = result.stdout.strip()
+            return float(value) if value else None
+        except Exception:
+            return None
+
+    def _probe_audio_duration(self, audio_path: Optional[str]) -> Optional[float]:
+        if not audio_path:
+            return None
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    audio_path,
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=5,
+            )
+            value = result.stdout.strip()
+            return float(value) if value else None
+        except Exception:
+            return None
     
     def queue_pregen(self, block_spec: Dict[str, Any]) -> None:
         """Queue a bumper block for pre-generation."""

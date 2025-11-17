@@ -10,7 +10,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Sequence, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -79,6 +79,10 @@ def add_music_to_bumper(
     output_path: str,
     music_track_path: Optional[str] = None,
     music_volume: float = 0.2,
+    *,
+    start_offset: float = 0.0,
+    segment_duration: Optional[float] = None,
+    loop_track: bool = True,
 ) -> None:
     """
     Mixes a music track underneath the supplied bumper video.
@@ -113,6 +117,31 @@ def add_music_to_bumper(
             shutil.move(str(video), str(output))
         return
 
+    filter_steps = []
+    audio_input = "[1:a]"
+    loop_label = "[track_looped]"
+    trimmed_label = "[music_seg]"
+    reset_label = "[music_seg_pts]"
+    # Optionally loop to guarantee enough duration for long offsets
+    if loop_track:
+        filter_steps.append(f"{audio_input}aloop=loop=-1:size=0{loop_label}")
+        audio_input = loop_label
+    else:
+        loop_label = audio_input
+    # Apply offset/duration trimming if requested
+    if start_offset or segment_duration:
+        start_offset = max(0.0, start_offset)
+        trim_parts = [f"start={start_offset:.3f}"]
+        if segment_duration and segment_duration > 0:
+            trim_parts.append(f"duration={segment_duration:.3f}")
+        filter_steps.append(f"{audio_input}atrim={':'.join(trim_parts)}{trimmed_label}")
+        audio_input = trimmed_label
+        filter_steps.append(f"{audio_input}asetpts=PTS-STARTPTS{reset_label}")
+        audio_input = reset_label
+    # Volume adjustment
+    filter_steps.append(f"{audio_input}volume={music_volume}[bg]")
+    filter_complex = ";".join(filter_steps)
+
     cmd = [
         "ffmpeg",
         "-y",
@@ -121,7 +150,7 @@ def add_music_to_bumper(
         "-i",
         str(track),
         "-filter_complex",
-        f"[1:a]volume={music_volume}[bg]",
+        filter_complex,
         "-map",
         "0:v",
         "-map",
