@@ -7,10 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 import logging
 import os
+import shutil
 import subprocess
 import time
 import json
-from typing import Optional
+from typing import Optional, Tuple
 
 try:
     import requests
@@ -31,8 +32,7 @@ if CONFIG_PATH is None:
     CONFIG_PATH = _config_paths[0]  # Default to first path
 
 API_KEY_FILE = CONFIG_PATH.parent / ".weather_api_key"
-CONTAINER_PATH = Path("/app/config/.weather_api_key")
-DEFAULT_CONTAINER_NAME = os.environ.get("TVCHANNEL_CONTAINER_NAME", "tvchannel")
+CONTAINER_KEY_PATH = Path("/app/config/.weather_api_key")
 LOGGER = logging.getLogger(__name__)
 
 
@@ -72,6 +72,16 @@ def load_stored_api_key() -> Optional[str]:
     return None
 
 
+def _inside_container() -> bool:
+    """Return True if running inside Docker."""
+    return Path("/.dockerenv").exists()
+
+
+def _docker_available() -> bool:
+    """Return True if docker CLI is available on the host."""
+    return shutil.which("docker") is not None
+
+
 def store_api_key(value: str) -> None:
     """Persist API key to the secret file."""
     try:
@@ -82,36 +92,66 @@ def store_api_key(value: str) -> None:
         LOGGER.error("Failed to store weather API key: %s", exc)
         raise
 
-    # Best-effort sync: if running outside the container, copy the key into it
-    container_name = os.environ.get("TVCHANNEL_CONTAINER_NAME", DEFAULT_CONTAINER_NAME)
-    if container_name:
-        try:
-            if Path("/.dockerenv").exists():
-                # Already inside container; nothing to sync
-                return
-            subprocess.run(
-                [
-                    "docker",
-                    "cp",
-                    str(API_KEY_FILE),
-                    f"{container_name}:{CONTAINER_PATH}",
-                ],
-                check=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=5,
-            )
-            LOGGER.info(
-                "Synced weather API key to container '%s' at %s",
-                container_name,
-                CONTAINER_PATH,
-            )
-        except Exception as exc:
-            LOGGER.warning(
-                "Unable to sync weather API key to container '%s': %s",
-                container_name,
-                exc,
-            )
+    _sync_key_to_container()
+
+
+def _sync_key_to_container() -> None:
+    """Best-effort copy of the API key into the running container."""
+    if _inside_container():
+        # Nothing to do when running inside Docker
+        return
+
+    container_name = os.environ.get("TVCHANNEL_CONTAINER_NAME", "tvchannel")
+    if not container_name:
+        return
+
+    if not _docker_available():
+        LOGGER.debug("Docker CLI not available; skipping weather key sync to container")
+        return
+
+    try:
+        subprocess.run(
+            [
+                "docker",
+                "cp",
+                str(API_KEY_FILE),
+                f"{container_name}:{CONTAINER_KEY_PATH}",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=5,
+        )
+        LOGGER.info(
+            "Synced weather API key to container '%s' at %s",
+            container_name,
+            CONTAINER_KEY_PATH,
+        )
+    except Exception as exc:
+        LOGGER.warning(
+            "Unable to sync weather API key to container '%s': %s",
+            container_name,
+            exc,
+        )
+
+
+def _resolve_api_key(cfg: dict) -> Optional[str]:
+    """Resolve an API key from environment, config, or stored secret."""
+    api_var = cfg.get("api_key_env_var", "HBN_WEATHER_API_KEY")
+    sources: Tuple[Optional[str], ...] = (
+        os.getenv(api_var),
+        cfg.get("api_key"),
+        load_stored_api_key(),
+    )
+    for key in sources:
+        if key:
+            return key
+    LOGGER.warning(
+        "Weather bumpers enabled but no API key found. "
+        "Set %s or configure the key via the admin UI.",
+        api_var,
+    )
+    return None
 
 
 def get_current_weather() -> Optional[WeatherInfo]:
@@ -136,12 +176,7 @@ def get_current_weather() -> Optional[WeatherInfo]:
     if requests is None:
         return None
     
-    api_var = cfg.get("api_key_env_var", "HBN_WEATHER_API_KEY")
-    api_key = os.getenv(api_var)
-    if not api_key:
-        api_key = cfg.get("api_key")
-    if not api_key:
-        api_key = load_stored_api_key()
+    api_key = _resolve_api_key(cfg)
     if not api_key:
         return None
     

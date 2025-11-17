@@ -138,13 +138,11 @@ def _resolve_bumper_block(current_index: int, files: List[str]) -> Optional[Any]
         from server.generate_playlist import (
             SASSY_CARDS,
             load_weather_config,
-            WEATHER_BUMPER_MARKER,
             find_existing_bumper,
             extract_episode_metadata,
             ensure_bumper,
             infer_show_title_from_path,
         )
-        import random
         
         generator = get_generator()
         
