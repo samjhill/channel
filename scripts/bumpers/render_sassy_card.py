@@ -220,6 +220,10 @@ def _wrap_lines(
     font: ImageFont.ImageFont,
     max_width: int,
 ) -> list[str]:
+    """
+    Wrap text into lines that fit within max_width.
+    Improved version that handles punctuation and tries to break at natural points.
+    """
     words = text.split()
     if not words:
         return []
@@ -230,15 +234,38 @@ def _wrap_lines(
     for word in words:
         current.append(word)
         candidate = " ".join(current)
-        if draw.textlength(candidate, font=font) > max_width:
-            current.pop()
+        text_width = draw.textlength(candidate, font=font)
+        
+        if text_width > max_width:
+            current.pop()  # Remove the word that made it too wide
             if current:
-                lines.append(" ".join(current))
-                current = [word]
+                # Try to break at a better point if we have punctuation
+                line_text = " ".join(current)
+                # Check if we can break at punctuation for better readability
+                if len(current) > 1 and current[-1][-1] in ",;:.":
+                    # Keep punctuation with previous word
+                    lines.append(line_text)
+                    current = [word]
+                else:
+                    # Break normally
+                    lines.append(line_text)
+                    current = [word]
             else:
-                # Word itself is wider than max width; force break.
-                lines.append(word)
-                current = []
+                # Word itself is wider than max width; try to break it
+                if len(word) > 20:  # Only break very long words
+                    # Try to break at hyphens or other separators
+                    if "-" in word:
+                        parts = word.split("-", 1)
+                        lines.append(parts[0] + "-")
+                        current = [parts[1]] if parts[1] else []
+                    else:
+                        # Force break long word
+                        lines.append(word[:20] + "-")
+                        current = [word[20:]]
+                else:
+                    # Short word that's just too wide - keep it
+                    lines.append(word)
+                    current = []
 
     if current:
         lines.append(" ".join(current))

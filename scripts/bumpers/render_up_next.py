@@ -66,6 +66,34 @@ THEME_PRESETS = [
         "accent": "#FF7043",
         "pattern": "#FFF8E1",
     },
+    {
+        "name": "ocean-depths",
+        "top": "#0A1929",
+        "bottom": "#1E3A5F",
+        "accent": "#4FC3F7",
+        "pattern": "#B2EBF2",
+    },
+    {
+        "name": "forest-dawn",
+        "top": "#1B4332",
+        "bottom": "#40916C",
+        "accent": "#95D5B2",
+        "pattern": "#D8F3DC",
+    },
+    {
+        "name": "purple-dream",
+        "top": "#2D1B69",
+        "bottom": "#6A4C93",
+        "accent": "#C77DFF",
+        "pattern": "#E0AAFF",
+    },
+    {
+        "name": "amber-glow",
+        "top": "#3E2723",
+        "bottom": "#8D6E63",
+        "accent": "#FFB74D",
+        "pattern": "#FFE0B2",
+    },
 ]
 
 LOGO_DEFAULT_PATH = "assets/branding/hbn_logo_bug.png"

@@ -157,7 +157,8 @@ def find_existing_bumper(
 ) -> Optional[str]:
     """
     Check if a bumper already exists for the given show/episode.
-    Returns the path to the bumper if found, None otherwise.
+    Validates that the bumper is a valid video file before returning it.
+    Returns the path to the bumper if found and valid, None otherwise.
     Does not create new bumpers.
     """
     base_name = safe_filename(show_title)
@@ -167,16 +168,30 @@ def find_existing_bumper(
     if episode_code:
         specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
         specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
-        if os.path.exists(specific_bumper_path):
+        if os.path.exists(specific_bumper_path) and _validate_bumper_file(specific_bumper_path):
             return specific_bumper_path
 
     # Fall back to generic bumper
     generic_filename = f"{base_name}.mp4"
     generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
-    if os.path.exists(generic_bumper_path):
+    if os.path.exists(generic_bumper_path) and _validate_bumper_file(generic_bumper_path):
         return generic_bumper_path
 
     return None
+
+
+def _validate_bumper_file(bumper_path: str) -> bool:
+    """
+    Validate that a bumper file is a valid video file.
+    Returns True if valid, False otherwise.
+    """
+    try:
+        from scripts.bumpers.ffmpeg_utils import validate_video_file
+        from pathlib import Path
+        return validate_video_file(Path(bumper_path), min_duration_sec=0.5)
+    except Exception as e:
+        LOGGER.warning("Failed to validate bumper file %s: %s", bumper_path, e)
+        return False
 
 
 def _render_bumper_safe(
