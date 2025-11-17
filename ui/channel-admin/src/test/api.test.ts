@@ -14,7 +14,7 @@ import {
 describe("API functions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    global.fetch = vi.fn();
+    globalThis.fetch = vi.fn() as typeof fetch;
   });
 
   describe("fetchChannels", () => {
@@ -31,18 +31,18 @@ describe("API functions", () => {
         },
       ];
 
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: true,
         json: async () => mockChannels,
       });
 
       const result = await fetchChannels();
       expect(result).toEqual(mockChannels);
-      expect(global.fetch).toHaveBeenCalledWith("/api/channels");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/channels");
     });
 
     it("should throw error on failed request", async () => {
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: false,
         statusText: "Not Found",
         json: async () => ({ detail: "Channels not found" }),
@@ -64,14 +64,14 @@ describe("API functions", () => {
         shows: [],
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: true,
         json: async () => mockChannel,
       });
 
       const result = await fetchChannel("channel-1");
       expect(result).toEqual(mockChannel);
-      expect(global.fetch).toHaveBeenCalledWith("/api/channels/channel-1");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/channels/channel-1");
     });
   });
 
@@ -87,13 +87,13 @@ describe("API functions", () => {
         shows: [],
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: true,
         json: async () => ({}),
       });
 
       await saveChannel(channel);
-      expect(global.fetch).toHaveBeenCalledWith("/api/channels/channel-1", {
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/channels/channel-1", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(channel),
@@ -114,14 +114,14 @@ describe("API functions", () => {
         },
       ];
 
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: true,
         json: async () => mockShows,
       });
 
       const result = await discoverShows("channel-1", "/media/tv");
       expect(result).toEqual(mockShows);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/channels/channel-1/shows/discover?media_root=%2Fmedia%2Ftv"
       );
     });
@@ -141,14 +141,14 @@ describe("API functions", () => {
         limit: 25,
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: true,
         json: async () => mockSnapshot,
       });
 
       const result = await fetchPlaylistSnapshot("channel-1", 25);
       expect(result).toEqual(mockSnapshot);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/channels/channel-1/playlist/next?limit=25"
       );
     });
@@ -168,7 +168,7 @@ describe("API functions", () => {
         limit: 25,
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: true,
         json: async () => mockSnapshot,
       });
@@ -181,7 +181,7 @@ describe("API functions", () => {
 
       const result = await updateUpcomingPlaylist("channel-1", payload, 25);
       expect(result).toEqual(mockSnapshot);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/channels/channel-1/playlist/next?limit=25",
         {
           method: "POST",
@@ -206,14 +206,14 @@ describe("API functions", () => {
         limit: 25,
       };
 
-      (global.fetch as any).mockResolvedValueOnce({
+      (globalThis.fetch as any).mockResolvedValueOnce({
         ok: true,
         json: async () => mockSnapshot,
       });
 
       const result = await skipCurrentEpisode("channel-1");
       expect(result).toEqual(mockSnapshot);
-      expect(global.fetch).toHaveBeenCalledWith(
+      expect(globalThis.fetch).toHaveBeenCalledWith(
         "/api/channels/channel-1/playlist/skip-current",
         {
           method: "POST",
