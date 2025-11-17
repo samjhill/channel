@@ -94,8 +94,10 @@
                   
                   // CRITICAL: If the first segment start time reset to near 0, FFmpeg restarted
                   // This is the most reliable indicator of a skip/restart
-                  if (lastSegmentStartTime > 30 && newStartTime < 10) {
-                    console.log('⚠️ FFmpeg restart detected (segment start time reset) - forcing seek to live edge');
+                  // Also check if we're transitioning from a long video to a short bumper (or vice versa)
+                  const timeJump = Math.abs(newStartTime - lastSegmentStartTime);
+                  if ((lastSegmentStartTime > 30 && newStartTime < 10) || (timeJump > 20 && lastSegmentStartTime > 0)) {
+                    console.log(`⚠️ FFmpeg restart detected (segment start time reset: ${lastSegmentStartTime.toFixed(1)}s -> ${newStartTime.toFixed(1)}s) - forcing seek to live edge`);
                     discontinuityDetected = true;
                     // Force seek to live edge immediately
                     const seekTime = Math.max(0, newEndTime - 6);

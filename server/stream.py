@@ -439,6 +439,7 @@ def run_stream():
             # Check if playhead has been updated externally (e.g., by skip API)
             # This allows the skip button to work by jumping to the next episode
             # Only treat as external update if playhead points to a DIFFERENT file than normal flow
+            # AND it's not the file we just finished streaming (to avoid loops)
             playhead_state = load_playhead_state()
             playhead_updated_externally = False
             
@@ -451,6 +452,7 @@ def run_stream():
                 if _normalize_path:
                     normalized_playhead = _normalize_path(playhead_path)
                     normalized_normal_next = _normalize_path(normal_next_src)
+                    normalized_last_played = _normalize_path(last_played) if last_played else None
                     # Check if playhead path matches any file in the playlist (using normalized comparison)
                     playhead_matches = False
                     matching_index = -1
@@ -462,7 +464,9 @@ def run_stream():
                             break
                     
                     # Only treat as external update if playhead points to a DIFFERENT file than normal flow
+                    # AND it's not the file we just finished streaming (prevents loops)
                     playhead_differs_from_normal = normalized_playhead != normalized_normal_next
+                    playhead_is_last_played = normalized_last_played and normalized_playhead == normalized_last_played
                 else:
                     # Fallback: direct comparison
                     playhead_matches = playhead_path in files
@@ -471,16 +475,19 @@ def run_stream():
                     except ValueError:
                         matching_index = -1
                     playhead_differs_from_normal = playhead_path != normal_next_src
+                    playhead_is_last_played = last_played and playhead_path == last_played
                 
                 # If playhead was updated externally and points to a valid file DIFFERENT from normal flow, use it
                 # This happens when the skip API updates the playhead
                 # Use lenient mtime check or recent update check
+                # BUT ignore if playhead points to the file we just finished (prevents infinite loops)
                 mtime_match = abs(playhead_mtime - playlist_mtime) < 1.0
                 playhead_updated_at = playhead_state.get("updated_at", 0.0)
                 recent_update = playhead_updated_at > 0 and (time.time() - playhead_updated_at) < 10.0
                 
                 # Only jump if playhead differs from normal flow AND was recently updated (skip command)
-                if playhead_matches and playhead_differs_from_normal and (mtime_match or recent_update):
+                # AND it's not the file we just finished streaming
+                if playhead_matches and playhead_differs_from_normal and not playhead_is_last_played and (mtime_match or recent_update):
                     next_index = matching_index
                     src = files[matching_index]  # Use the actual file path from the playlist
                     playhead_updated_externally = True
