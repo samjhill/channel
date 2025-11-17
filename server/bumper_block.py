@@ -65,12 +65,24 @@ class BumperBlockGenerator:
         If sassy_card is None, tries to match any block with the same up_next_bumper.
         This allows using pre-generated blocks even if the sassy card was drawn differently.
         """
+        with self._pregen_lock:
+            cache_size = len(self._pregenerated_blocks)
+        LOGGER.debug(
+            "get_pregenerated_block: up_next=%s, cache_size=%d",
+            Path(up_next_bumper).name if up_next_bumper else None,
+            cache_size,
+        )
         # First try exact match
         spec_hash = self._spec_hash(up_next_bumper, sassy_card, network_bumper, weather_bumper)
         with self._pregen_lock:
             if spec_hash in self._pregenerated_blocks:
                 block = self._pregenerated_blocks.pop(spec_hash)
-                LOGGER.info(f"Retrieved pre-generated bumper block (exact match) {spec_hash}")
+                LOGGER.info(
+                    "Retrieved pre-generated bumper block (exact match) %s (bumpers: %d, remaining cache: %d)",
+                    spec_hash[:8],
+                    len(block.bumpers) if block and block.bumpers else 0,
+                    len(self._pregenerated_blocks),
+                )
                 return block
             
             # If sassy_card is None, try to find any block with matching up_next_bumper
@@ -80,14 +92,22 @@ class BumperBlockGenerator:
                 test_hash = self._spec_hash(up_next_bumper, None, None, weather_bumper if weather_bumper else None)
                 if test_hash in self._pregenerated_blocks:
                     block = self._pregenerated_blocks.pop(test_hash)
-                    LOGGER.info(f"Retrieved pre-generated bumper block (hash match with None sassy) {test_hash}")
+                    LOGGER.info(
+                        "Retrieved pre-generated bumper block (hash match with None sassy) %s (bumpers: %d)",
+                        test_hash[:8],
+                        len(block.bumpers) if block and block.bumpers else 0,
+                    )
                     return block
                 
                 # Try with just up_next (no weather)
                 test_hash = self._spec_hash(up_next_bumper, None, None, None)
                 if test_hash in self._pregenerated_blocks:
                     block = self._pregenerated_blocks.pop(test_hash)
-                    LOGGER.info(f"Retrieved pre-generated bumper block (hash match up_next only) {test_hash}")
+                    LOGGER.info(
+                        "Retrieved pre-generated bumper block (hash match up_next only) %s (bumpers: %d)",
+                        test_hash[:8],
+                        len(block.bumpers) if block and block.bumpers else 0,
+                    )
                     return block
                 
                 # Iterate through all pre-generated blocks to find one with matching up_next
@@ -98,7 +118,11 @@ class BumperBlockGenerator:
                         # The up_next_bumper should be in the bumpers list (typically 3rd position)
                         if up_next_bumper in cached_block.bumpers:
                             block = self._pregenerated_blocks.pop(cached_hash)
-                            LOGGER.info(f"Retrieved pre-generated bumper block (up_next match in bumpers) {cached_hash}")
+                            LOGGER.info(
+                                "Retrieved pre-generated bumper block (up_next match in bumpers) %s (bumpers: %d)",
+                                cached_hash[:8],
+                                len(block.bumpers) if block and block.bumpers else 0,
+                            )
                             return block
                 
                 # Last resort: return the first available block (FIFO)
@@ -106,9 +130,14 @@ class BumperBlockGenerator:
                 if self._pregenerated_blocks:
                     first_hash = next(iter(self._pregenerated_blocks.keys()))
                     block = self._pregenerated_blocks.pop(first_hash)
-                    LOGGER.info(f"Retrieved pre-generated bumper block (first available) {first_hash}")
+                    LOGGER.info(
+                        "Retrieved pre-generated bumper block (first available) %s (bumpers: %d)",
+                        first_hash[:8],
+                        len(block.bumpers) if block and block.bumpers else 0,
+                    )
                     return block
         
+        LOGGER.debug("No pre-generated block found matching criteria")
         return None
     
     def generate_block(
@@ -165,7 +194,9 @@ class BumperBlockGenerator:
         up_next_exists = up_next_bumper and os.path.exists(up_next_bumper)
         network_exists = network_bumper and os.path.exists(network_bumper)
 
-        if not (sassy_exists and weather_exists and up_next_exists):
+        # Require sassy and up_next, but weather is optional
+        # Weather might not be generated if API key is missing or disabled
+        if not (sassy_exists and up_next_exists):
             LOGGER.warning(
                 "Incomplete bumper block spec (sassy=%s, weather=%s, up_next=%s) - skipping block",
                 bool(sassy_exists),
@@ -173,6 +204,10 @@ class BumperBlockGenerator:
                 bool(up_next_exists),
             )
             return None
+        
+        # If weather is missing but was requested, log a warning but continue
+        if weather_bumper == "WEATHER_BUMPER" and not weather_exists:
+            LOGGER.warning("Weather bumper was requested but not available, continuing without it")
 
         # Collect all valid bumpers in the correct order:
         # 1. Sassy card (exactly one)
@@ -368,6 +403,14 @@ class BumperBlockGenerator:
         """Queue a bumper block for pre-generation."""
         with self._pregen_lock:
             self._pregen_queue.append(block_spec)
+            queue_size = len(self._pregen_queue)
+            cache_size = len(self._pregenerated_blocks)
+        LOGGER.info(
+            "Added block to pre-generation queue (queue size: %d, cache size: %d, up_next: %s)",
+            queue_size,
+            cache_size,
+            Path(block_spec.get("up_next_bumper", "")).name if block_spec.get("up_next_bumper") else None,
+        )
     
     def start_pregen_thread(self) -> None:
         """Start the pre-generation thread."""
@@ -391,13 +434,21 @@ class BumperBlockGenerator:
     
     def _pregen_worker(self) -> None:
         """Worker thread that pre-generates bumper blocks."""
+        LOGGER.info("Pre-generation worker thread started")
         while not self._stop_pregen.is_set():
             block_spec = None
             with self._pregen_lock:
                 if self._pregen_queue:
                     block_spec = self._pregen_queue.pop(0)
+                    remaining = len(self._pregen_queue)
             
             if block_spec:
+                up_next = block_spec.get("up_next_bumper")
+                LOGGER.info(
+                    "Pre-generation worker: Processing block from queue (up_next: %s, remaining in queue: %d)",
+                    Path(up_next).name if up_next else None,
+                    remaining if block_spec else 0,
+                )
                 try:
                     # Generate block with music (for pre-generation)
                     block = self.generate_block(**block_spec, skip_music=False)
@@ -411,9 +462,17 @@ class BumperBlockGenerator:
                         )
                         with self._pregen_lock:
                             self._pregenerated_blocks[spec_hash] = block
-                        LOGGER.info(f"Pre-generated bumper block {spec_hash} (cache size: {len(self._pregenerated_blocks)})")
+                            cache_size = len(self._pregenerated_blocks)
+                        LOGGER.info(
+                            "Pre-generation worker: Successfully generated and cached block %s (cache size: %d, bumpers: %d)",
+                            spec_hash[:8],
+                            cache_size,
+                            len(block.bumpers) if block else 0,
+                        )
+                    else:
+                        LOGGER.warning("Pre-generation worker: Block generation returned None")
                 except Exception as e:
-                    LOGGER.error(f"Failed to pre-generate bumper block: {e}")
+                    LOGGER.error(f"Pre-generation worker: Failed to pre-generate bumper block: {e}", exc_info=True)
             else:
                 # No work, sleep briefly
                 time.sleep(0.5)
