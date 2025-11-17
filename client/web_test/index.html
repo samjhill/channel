@@ -42,8 +42,8 @@
           maxBufferLength: 90,
           maxMaxBufferLength: 300,
           backBufferLength: 120,
-          liveSyncDuration: 12,
-          liveMaxLatencyDuration: 90,
+          liveSyncDuration: 18,
+          liveMaxLatencyDuration: 120,
           maxBufferSize: 60 * 1000 * 1000,
           maxBufferHole: 0.5,
           startLevel: -1,
@@ -58,7 +58,11 @@
           maxFragLoadingTimeMs: 20000,
           fragLoadingTimeOut: 20000,
           fragLoadingMaxRetry: 4,
-          fragLoadingRetryDelay: 1000
+          fragLoadingRetryDelay: 1000,
+          // Prevent aggressive seeking that causes buffer starvation
+          maxSeekHole: 2,
+          // Ensure we maintain buffer ahead of playback
+          liveMinLatencyDuration: 6
         };
         const hls = new Hls(hlsConfig);
         hls.loadSource(streamUrl);
@@ -67,6 +71,8 @@
         // Debounce buffer stall recovery
         let lastStallRecovery = 0;
         let recoveryInProgress = false;
+        let consecutiveStalls = 0;
+        let lastStallTime = 0;
         const STALL_RECOVERY_COOLDOWN = 3000; // 3 seconds between recovery attempts
         
         let lastSegmentCount = 0;
@@ -220,13 +226,26 @@
                   const liveEdge = currentEndTime;
                   
                   // Check if we're way behind the live edge (indicates stream restarted)
-                  if (currentPlaybackTime > 0 && liveEdge > 0) {
+                  // But only if we have good buffer and aren't in recovery
+                  if (currentPlaybackTime > 0 && liveEdge > 0 && !recoveryInProgress) {
                     const latency = liveEdge - currentPlaybackTime;
-                    if (latency > 60 && lastLiveEdgeTime > 0) {
+                    // Check buffer before seeking
+                    const buffered = video.buffered;
+                    let bufferRemaining = 0;
+                    if (buffered.length > 0) {
+                      for (let i = 0; i < buffered.length; i++) {
+                        if (currentPlaybackTime >= buffered.start(i) && currentPlaybackTime < buffered.end(i)) {
+                          bufferRemaining = buffered.end(i) - currentPlaybackTime;
+                          break;
+                        }
+                      }
+                    }
+                    // Only seek if we have good buffer (> 10s) and are significantly behind
+                    if (latency > 60 && lastLiveEdgeTime > 0 && bufferRemaining > 10) {
                       // We're more than 60 seconds behind, and we had a previous live edge
                       // This likely means the stream restarted
-                      console.log(`⚠️ Large latency detected (${latency.toFixed(1)}s behind live edge) - likely stream restart, seeking forward`);
-                      const seekTime = Math.max(0, liveEdge - 6);
+                      console.log(`⚠️ Large latency detected (${latency.toFixed(1)}s behind live edge, ${bufferRemaining.toFixed(1)}s buffer) - likely stream restart, seeking forward`);
+                      const seekTime = Math.max(0, liveEdge - 12); // Seek further back for safety
                       video.currentTime = seekTime;
                       video.play().catch(() => {});
                       discontinuityDetected = true;
@@ -270,30 +289,75 @@
                     lastSegmentCount = fragments.length;
                     
                     // Check if segment start time reset (most reliable indicator of restart)
-                    if (lastSegmentStartTime > 30 && currentStartTime < 10) {
-                      console.log('⚠️ Segment start time reset detected in polling - FFmpeg restarted!');
-                      const seekTime = Math.max(0, currentEndTime - 6);
-                      video.currentTime = seekTime;
-                      video.play().catch(() => {});
-                      discontinuityDetected = true;
+                    // But only if we have good buffer and aren't in recovery
+                    if (lastSegmentStartTime > 30 && currentStartTime < 10 && !recoveryInProgress) {
+                      // Check buffer before seeking
+                      const buffered = video.buffered;
+                      let bufferRemaining = 0;
+                      if (buffered.length > 0) {
+                        const currentTime = video.currentTime;
+                        for (let i = 0; i < buffered.length; i++) {
+                          if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                            bufferRemaining = buffered.end(i) - currentTime;
+                            break;
+                          }
+                        }
+                      }
+                      if (bufferRemaining > 10) {
+                        console.log('⚠️ Segment start time reset detected in polling - FFmpeg restarted!');
+                        const seekTime = Math.max(0, currentEndTime - 12); // Seek further back
+                        video.currentTime = seekTime;
+                        video.play().catch(() => {});
+                        discontinuityDetected = true;
+                      }
                     }
                     
                     // Check for discontinuity (end time decreased significantly)
-                    if (lastSegmentEndTime > 0 && currentEndTime < lastSegmentEndTime - 10) {
-                      console.log('⚠️ Discontinuity detected in polling - seeking to live edge');
-                      const seekTime = Math.max(0, currentEndTime - 6);
-                      video.currentTime = seekTime;
-                      video.play().catch(() => {});
-                      discontinuityDetected = true;
+                    // But only if we have good buffer and aren't in recovery
+                    if (lastSegmentEndTime > 0 && currentEndTime < lastSegmentEndTime - 10 && !recoveryInProgress) {
+                      // Check buffer before seeking
+                      const buffered = video.buffered;
+                      let bufferRemaining = 0;
+                      if (buffered.length > 0) {
+                        const currentTime = video.currentTime;
+                        for (let i = 0; i < buffered.length; i++) {
+                          if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                            bufferRemaining = buffered.end(i) - currentTime;
+                            break;
+                          }
+                        }
+                      }
+                      if (bufferRemaining > 10) {
+                        console.log('⚠️ Discontinuity detected in polling - seeking to live edge');
+                        const seekTime = Math.max(0, currentEndTime - 12); // Seek further back
+                        video.currentTime = seekTime;
+                        video.play().catch(() => {});
+                        discontinuityDetected = true;
+                      }
                     }
                     
                     // Check if segment count decreased significantly (indicates restart)
-                    if (oldCount > 10 && fragments.length < oldCount - 5) {
-                      console.log('⚠️ Segment count decreased significantly - likely restart, seeking to live edge');
-                      const seekTime = Math.max(0, currentEndTime - 6);
-                      video.currentTime = seekTime;
-                      video.play().catch(() => {});
-                      discontinuityDetected = true;
+                    // But only if we have good buffer and aren't in recovery
+                    if (oldCount > 10 && fragments.length < oldCount - 5 && !recoveryInProgress) {
+                      // Check buffer before seeking
+                      const buffered = video.buffered;
+                      let bufferRemaining = 0;
+                      if (buffered.length > 0) {
+                        const currentTime = video.currentTime;
+                        for (let i = 0; i < buffered.length; i++) {
+                          if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
+                            bufferRemaining = buffered.end(i) - currentTime;
+                            break;
+                          }
+                        }
+                      }
+                      if (bufferRemaining > 10) {
+                        console.log('⚠️ Segment count decreased significantly - likely restart, seeking to live edge');
+                        const seekTime = Math.max(0, currentEndTime - 12); // Seek further back
+                        video.currentTime = seekTime;
+                        video.play().catch(() => {});
+                        discontinuityDetected = true;
+                      }
                     }
                     
                     lastSegmentEndTime = currentEndTime;
@@ -513,6 +577,14 @@
                 lastStallRecovery = now;
                 recoveryInProgress = true;
                 
+                // Track consecutive stalls to back off more aggressively
+                if (now - lastStallTime < 10000) {
+                  consecutiveStalls++;
+                } else {
+                  consecutiveStalls = 1;
+                }
+                lastStallTime = now;
+                
                 // Pause to let buffer rebuild
                 if (!video.paused) {
                   video.pause();
@@ -550,14 +622,17 @@
                             return; // Exit early
                           } else {
                             // We're at or near live edge with critically low buffer
-                            // Seek back slightly (15-20s) to where there should be buffer
+                            // Seek back further if we've had consecutive stalls
                             // This gives HLS.js room to build buffer before we catch up
-                            const seekBackTime = Math.max(0, liveEdge - 18);
-                            console.log(`At live edge (${latency.toFixed(1)}s behind) with low buffer, seeking back to ${seekBackTime.toFixed(1)}s to rebuild buffer`);
+                            // Start with 30s back on first stall, increase with consecutive stalls
+                            const seekBackAmount = consecutiveStalls > 2 ? 60 : (consecutiveStalls > 1 ? 45 : 30);
+                            const seekBackTime = Math.max(0, liveEdge - seekBackAmount);
+                            console.log(`At live edge (${latency.toFixed(1)}s behind) with low buffer, seeking back ${seekBackAmount}s to ${seekBackTime.toFixed(1)}s to rebuild buffer (consecutive stalls: ${consecutiveStalls})`);
                             video.currentTime = seekBackTime;
                             // Force manifest reload and wait longer for buffer to build
                             hls.startLoad();
-                            // Wait longer when seeking back from live edge
+                            // Wait longer when seeking back from live edge, especially with consecutive stalls
+                            const waitTime = consecutiveStalls > 1 ? 5000 : 4000;
                             setTimeout(() => {
                               // Check if buffer has built up
                               const buffered = video.buffered;
@@ -571,18 +646,62 @@
                                   }
                                 }
                               }
-                              if (bufferRemaining > 5) {
-                                console.log(`Buffer rebuilt (${bufferRemaining.toFixed(1)}s), resuming playback`);
+                              // Require buffer equal to seek back amount + 10s safety margin
+                              // This ensures we have enough buffer to catch up without stalling
+                              const requiredBuffer = seekBackAmount + 10;
+                              if (bufferRemaining > requiredBuffer) {
+                                console.log(`Buffer rebuilt (${bufferRemaining.toFixed(1)}s, need ${requiredBuffer}s), resuming playback`);
                                 video.play().catch(() => {});
+                                recoveryInProgress = false;
                               } else {
-                                console.log(`Buffer still low (${bufferRemaining.toFixed(1)}s), waiting longer...`);
-                                // Wait another 2 seconds
+                                console.log(`Buffer still low (${bufferRemaining.toFixed(1)}s, need ${requiredBuffer}s), waiting longer...`);
+                                // Wait another 3 seconds and check again
                                 setTimeout(() => {
-                                  video.play().catch(() => {});
-                                }, 2000);
+                                  const buffered2 = video.buffered;
+                                  let bufferRemaining2 = 0;
+                                  if (buffered2.length > 0) {
+                                    const checkTime2 = video.currentTime;
+                                    for (let i = 0; i < buffered2.length; i++) {
+                                      if (checkTime2 >= buffered2.start(i) && checkTime2 < buffered2.end(i)) {
+                                        bufferRemaining2 = buffered2.end(i) - checkTime2;
+                                        break;
+                                      }
+                                    }
+                                  }
+                                  // Still require the full amount
+                                  if (bufferRemaining2 > requiredBuffer) {
+                                    console.log(`Buffer finally rebuilt (${bufferRemaining2.toFixed(1)}s, need ${requiredBuffer}s), resuming playback`);
+                                    video.play().catch(() => {});
+                                  } else {
+                                    console.log(`Buffer still insufficient (${bufferRemaining2.toFixed(1)}s, need ${requiredBuffer}s), waiting more...`);
+                                    // Wait one more time
+                                    setTimeout(() => {
+                                      const buffered3 = video.buffered;
+                                      let bufferRemaining3 = 0;
+                                      if (buffered3.length > 0) {
+                                        const checkTime3 = video.currentTime;
+                                        for (let i = 0; i < buffered3.length; i++) {
+                                          if (checkTime3 >= buffered3.start(i) && checkTime3 < buffered3.end(i)) {
+                                            bufferRemaining3 = buffered3.end(i) - checkTime3;
+                                            break;
+                                          }
+                                        }
+                                      }
+                                      if (bufferRemaining3 > requiredBuffer * 0.8) {
+                                        console.log(`Buffer acceptable (${bufferRemaining3.toFixed(1)}s), resuming playback`);
+                                        video.play().catch(() => {});
+                                      } else {
+                                        console.log(`Buffer still insufficient (${bufferRemaining3.toFixed(1)}s), resuming anyway but may stall`);
+                                        video.play().catch(() => {});
+                                      }
+                                      recoveryInProgress = false;
+                                    }, 3000);
+                                    return; // Don't set recoveryInProgress = false yet
+                                  }
+                                  recoveryInProgress = false;
+                                }, 3000);
                               }
-                              recoveryInProgress = false;
-                            }, 3000); // Wait 3 seconds for buffer to build
+                            }, waitTime);
                             return; // Exit early
                           }
                         }
