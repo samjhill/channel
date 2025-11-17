@@ -238,7 +238,7 @@ main() {
     START_DOCKER=true
     START_API=true
     START_ADMIN_UI=true
-    START_TEST_CLIENT=false
+    START_TEST_CLIENT=true
     
     while [[ $# -gt 0 ]]; do
         case $1 in
