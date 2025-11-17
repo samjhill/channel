@@ -31,10 +31,10 @@ _channels_index: Dict[str, Dict[str, Any]] = {}
 def _resolve_config_path() -> Path:
     """Resolve config path with caching."""
     global _config_path_cache
-    
+
     if _config_path_cache is not None:
         return _config_path_cache
-    
+
     override = os.environ.get("CHANNEL_CONFIG")
     if override:
         _config_path_cache = Path(override).expanduser()
@@ -151,7 +151,9 @@ def normalize_channel(channel: Dict[str, Any]) -> Dict[str, Any]:
         playback = "sequential"
     normalized["playback_mode"] = playback
 
-    normalized["loop_entire_library"] = bool(normalized.get("loop_entire_library", True))
+    normalized["loop_entire_library"] = bool(
+        normalized.get("loop_entire_library", True)
+    )
 
     shows = normalized.get("shows") or []
     normalized_shows = []
@@ -211,9 +213,9 @@ def validate_settings(data: Dict[str, Any]) -> None:
 def load_settings() -> Dict[str, Any]:
     """Load settings with mtime-based caching."""
     global _settings_cache, _settings_mtime, _channels_index
-    
+
     config_path = _resolve_config_path()
-    
+
     # Check if file exists and get mtime
     if config_path.exists():
         try:
@@ -222,11 +224,11 @@ def load_settings() -> Dict[str, Any]:
             current_mtime = 0.0
     else:
         current_mtime = 0.0
-    
+
     # Return cached version if file hasn't changed
     if _settings_cache is not None and abs(current_mtime - _settings_mtime) < 0.001:
         return _settings_cache
-    
+
     # Load and normalize settings
     if config_path.exists():
         with config_path.open("r", encoding="utf-8") as fh:
@@ -243,14 +245,14 @@ def load_settings() -> Dict[str, Any]:
                 current_mtime = config_path.stat().st_mtime
             except OSError:
                 current_mtime = 0.0
-    
+
     # Update cache
     _settings_cache = normalized
     _settings_mtime = current_mtime
-    
+
     # Build channel index for O(1) lookups
     _channels_index = {ch.get("id"): ch for ch in normalized.get("channels", [])}
-    
+
     return normalized
 
 
@@ -297,5 +299,3 @@ def replace_channel(channel_id: str, new_data: Dict[str, Any]) -> Dict[str, Any]
     next_settings["channels"] = channels
     save_settings(next_settings)
     return updated_channel
-
-

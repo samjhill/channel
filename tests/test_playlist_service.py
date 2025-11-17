@@ -37,11 +37,12 @@ def test_resolve_playlist_path(monkeypatch, temp_dir: Path):
     """Test resolving playlist path."""
     test_path = temp_dir / "playlist.txt"
     monkeypatch.setenv("CHANNEL_PLAYLIST_PATH", str(test_path))
-    
+
     # Clear cache
     import server.playlist_service as ps_module
+
     ps_module._playlist_path_cache = None
-    
+
     result = resolve_playlist_path()
     assert result == test_path
 
@@ -51,10 +52,11 @@ def test_resolve_playhead_path(monkeypatch, temp_dir: Path):
     """Test resolving playhead path."""
     test_path = temp_dir / "playhead.json"
     monkeypatch.setenv("CHANNEL_PLAYHEAD_PATH", str(test_path))
-    
+
     import server.playlist_service as ps_module
+
     ps_module._playhead_path_cache = None
-    
+
     result = resolve_playhead_path()
     assert result == test_path
 
@@ -106,11 +108,12 @@ def test_load_and_write_playlist_entries(temp_dir: Path, monkeypatch):
     """Test loading and writing playlist entries."""
     playlist_file = temp_dir / "playlist.txt"
     monkeypatch.setenv("CHANNEL_PLAYLIST_PATH", str(playlist_file))
-    
+
     import server.playlist_service as ps_module
+
     ps_module._playlist_path_cache = None
     ps_module._playlist_cache = None
-    
+
     # Write entries
     entries = [
         "/path/to/episode1.mp4",
@@ -119,7 +122,7 @@ def test_load_and_write_playlist_entries(temp_dir: Path, monkeypatch):
     ]
     mtime = write_playlist_entries(entries)
     assert mtime > 0
-    
+
     # Load entries
     loaded_entries, loaded_mtime = load_playlist_entries()
     assert loaded_entries == entries
@@ -131,11 +134,12 @@ def test_load_playlist_entries_not_found(monkeypatch, temp_dir: Path):
     """Test loading playlist when file doesn't exist."""
     playlist_file = temp_dir / "nonexistent.txt"
     monkeypatch.setenv("CHANNEL_PLAYLIST_PATH", str(playlist_file))
-    
+
     import server.playlist_service as ps_module
+
     ps_module._playlist_path_cache = None
     ps_module._playlist_cache = None
-    
+
     with pytest.raises(FileNotFoundError):
         load_playlist_entries()
 
@@ -145,11 +149,12 @@ def test_load_and_save_playhead_state(temp_dir: Path, monkeypatch):
     """Test loading and saving playhead state."""
     playhead_file = temp_dir / "playhead.json"
     monkeypatch.setenv("CHANNEL_PLAYHEAD_PATH", str(playhead_file))
-    
+
     import server.playlist_service as ps_module
+
     ps_module._playhead_path_cache = None
     ps_module._playhead_cache = None
-    
+
     # Save state
     state = {
         "current_path": "/path/to/episode.mp4",
@@ -159,7 +164,7 @@ def test_load_and_save_playhead_state(temp_dir: Path, monkeypatch):
         "entry_type": "episode",
     }
     save_playhead_state(state)
-    
+
     # Load state
     loaded_state = load_playhead_state()
     assert loaded_state["current_path"] == state["current_path"]
@@ -172,11 +177,12 @@ def test_load_playhead_state_not_found(monkeypatch, temp_dir: Path):
     """Test loading playhead when file doesn't exist."""
     playhead_file = temp_dir / "nonexistent.json"
     monkeypatch.setenv("CHANNEL_PLAYHEAD_PATH", str(playhead_file))
-    
+
     import server.playlist_service as ps_module
+
     ps_module._playhead_path_cache = None
     ps_module._playhead_cache = None
-    
+
     state = load_playhead_state()
     assert state == {}
 
@@ -191,7 +197,7 @@ def test_build_playlist_segments():
         "/bumpers/up_next/show2.mp4",
         "/path/to/episode2.mp4",
     ]
-    
+
     segments = build_playlist_segments(entries)
     assert len(segments) == 2
     assert segments[0]["episode_path"] == "/path/to/episode1.mp4"
@@ -213,7 +219,7 @@ def test_flatten_segments():
             "entries": ["/path/to/episode2.mp4"],
         },
     ]
-    
+
     flattened = flatten_segments(segments)
     assert len(flattened) == 3
     assert flattened[0] == "/bumpers/up_next/show1.mp4"
@@ -228,7 +234,7 @@ def test_find_segment_index_for_entry():
         {"episode_path": "/path/to/episode1.mp4", "entries": ["/path/to/episode1.mp4"]},
         {"episode_path": "/path/to/episode2.mp4", "entries": ["/path/to/episode2.mp4"]},
     ]
-    
+
     assert find_segment_index_for_entry(segments, "/path/to/episode1.mp4") == 0
     assert find_segment_index_for_entry(segments, "/path/to/episode2.mp4") == 1
     assert find_segment_index_for_entry(segments, "/path/to/nonexistent.mp4") == -1
@@ -239,7 +245,7 @@ def test_describe_episode():
     """Test describing an episode."""
     episode_path = "/media/tvchannel/Show Name/Season 01/Episode 01.mp4"
     media_root = "/media/tvchannel"
-    
+
     description = describe_episode(episode_path, media_root, 0)
     assert description["path"] == episode_path
     assert description["type"] == "episode"
@@ -254,22 +260,23 @@ def test_watch_progress_operations(temp_dir: Path, monkeypatch):
     """Test watch progress operations."""
     progress_file = temp_dir / "watch_progress.json"
     monkeypatch.setenv("CHANNEL_WATCH_PROGRESS_PATH", str(progress_file))
-    
+
     import server.playlist_service as ps_module
+
     ps_module._watch_progress_path_cache = None
     ps_module._watch_progress_cache = None
-    
+
     # Mark episode as watched
     episode_path = "/path/to/episode.mp4"
     mark_episode_watched(episode_path)
-    
+
     # Check if watched
     assert is_episode_watched(episode_path) is True
-    
+
     # Get last watched
     last_watched = get_last_watched_episode()
     assert last_watched == episode_path
-    
+
     # Load progress
     progress = load_watch_progress()
     assert episode_path in progress["episodes"]
@@ -287,10 +294,10 @@ def test_resolve_watch_progress_path(monkeypatch, temp_dir: Path):
     """Test resolving watch progress path."""
     test_path = temp_dir / "watch_progress.json"
     monkeypatch.setenv("CHANNEL_WATCH_PROGRESS_PATH", str(test_path))
-    
+
     import server.playlist_service as ps_module
+
     ps_module._watch_progress_path_cache = None
-    
+
     result = resolve_watch_progress_path()
     assert result == test_path
-

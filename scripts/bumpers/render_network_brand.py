@@ -22,7 +22,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.music.add_music_to_bumper import add_random_music_to_bumper
-from scripts.bumpers.ffmpeg_utils import run_ffmpeg, validate_video_file, validate_frame_sequence
+from scripts.bumpers.ffmpeg_utils import (
+    run_ffmpeg,
+    validate_video_file,
+    validate_frame_sequence,
+)
 
 # Brand palette
 STEEL_BLUE = "#475D92"
@@ -50,7 +54,9 @@ def resolve_assets_root() -> Path:
     return repo_guess
 
 
-def svg_to_png(svg_path: Path, output_path: Path, width: int = 1024, height: int = 1024) -> bool:
+def svg_to_png(
+    svg_path: Path, output_path: Path, width: int = 1024, height: int = 1024
+) -> bool:
     """
     Convert SVG to PNG using available tools.
     Tries: rsvg-convert, cairosvg, inkscape, or falls back to existing PNG.
@@ -65,7 +71,16 @@ def svg_to_png(svg_path: Path, output_path: Path, width: int = 1024, height: int
     if shutil.which("rsvg-convert"):
         try:
             subprocess.run(
-                ["rsvg-convert", "-w", str(width), "-h", str(height), "-o", str(output_path), str(svg_path)],
+                [
+                    "rsvg-convert",
+                    "-w",
+                    str(width),
+                    "-h",
+                    str(height),
+                    "-o",
+                    str(output_path),
+                    str(svg_path),
+                ],
                 check=True,
                 capture_output=True,
             )
@@ -76,7 +91,13 @@ def svg_to_png(svg_path: Path, output_path: Path, width: int = 1024, height: int
     # Try cairosvg (Python package)
     try:
         import cairosvg
-        cairosvg.svg2png(url=str(svg_path), write_to=str(output_path), output_width=width, output_height=height)
+
+        cairosvg.svg2png(
+            url=str(svg_path),
+            write_to=str(output_path),
+            output_width=width,
+            output_height=height,
+        )
         return True
     except (ImportError, Exception):
         pass
@@ -85,7 +106,14 @@ def svg_to_png(svg_path: Path, output_path: Path, width: int = 1024, height: int
     if shutil.which("inkscape"):
         try:
             subprocess.run(
-                ["inkscape", "--export-type=png", f"--export-filename={output_path}", f"--export-width={width}", f"--export-height={height}", str(svg_path)],
+                [
+                    "inkscape",
+                    "--export-type=png",
+                    f"--export-filename={output_path}",
+                    f"--export-width={width}",
+                    f"--export-height={height}",
+                    str(svg_path),
+                ],
                 check=True,
                 capture_output=True,
             )
@@ -96,7 +124,9 @@ def svg_to_png(svg_path: Path, output_path: Path, width: int = 1024, height: int
     return False
 
 
-def ensure_logo_png(logo_svg_path: Path, output_png_path: Path, size: int = 800) -> Optional[Path]:
+def ensure_logo_png(
+    logo_svg_path: Path, output_png_path: Path, size: int = 800
+) -> Optional[Path]:
     """Ensure we have a PNG version of the logo."""
     if output_png_path.exists():
         return output_png_path
@@ -107,6 +137,7 @@ def ensure_logo_png(logo_svg_path: Path, output_png_path: Path, size: int = 800)
         # Resize the PNG if needed
         try:
             from PIL import Image
+
             img = Image.open(png_fallback)
             if img.size != (size, size):
                 img = img.resize((size, size), Image.LANCZOS)
@@ -230,7 +261,9 @@ def render_network_brand_bumper(
             if base_logo.mode == "RGBA":
                 alpha_extrema = base_logo.getextrema()[3]
                 if alpha_extrema == (0, 0):  # Alpha channel is all 0
-                    raise RuntimeError(f"Logo image is completely transparent: {logo_png}")
+                    raise RuntimeError(
+                        f"Logo image is completely transparent: {logo_png}"
+                    )
             # Check if RGB channels have any non-zero content (in case of RGB image)
             rgb_extrema = base_logo.getextrema()[:3]
             if all(ext == (0, 0) for ext in rgb_extrema):
@@ -240,7 +273,9 @@ def render_network_brand_bumper(
 
         num_frames = int(duration_sec * fps)
         if num_frames == 0:
-            raise RuntimeError(f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})")
+            raise RuntimeError(
+                f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})"
+            )
 
         # Animation parameters
         logo_start = 0.2
@@ -270,21 +305,27 @@ def render_network_brand_bumper(
             # Scale and apply alpha
             new_size = (int(frame.width * logo_scale), int(frame.height * logo_scale))
             scaled_frame = frame.resize(new_size, Image.LANCZOS)
-            
+
             # Create centered canvas
             logo_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
             logo_x = (width - scaled_frame.width) // 2
             logo_y = (height - scaled_frame.height) // 2
-            
+
             # Apply alpha
-            alpha_mask = scaled_frame.getchannel("A").point(lambda a: int(a * logo_alpha))
+            alpha_mask = scaled_frame.getchannel("A").point(
+                lambda a: int(a * logo_alpha)
+            )
             scaled_frame.putalpha(alpha_mask)
-            
+
             logo_layer.paste(scaled_frame, (logo_x, logo_y), scaled_frame)
             frame = logo_layer
 
             # Fade out
-            fade_progress = clamp((t - fade_out_start) / fade_out_duration) if t >= fade_out_start else 0.0
+            fade_progress = (
+                clamp((t - fade_out_start) / fade_out_duration)
+                if t >= fade_out_start
+                else 0.0
+            )
             if fade_progress > 0:
                 fade_alpha = int(255 * fade_progress)
                 black_layer = Image.new("RGBA", frame.size, (0, 0, 0, fade_alpha))
@@ -293,7 +334,7 @@ def render_network_brand_bumper(
             frame_path = Path(tmpdir) / f"frame_{idx:04d}.png"
             frame.convert("RGB").save(frame_path, "PNG")
             frames_generated += 1
-            
+
             # Validate frame is not all black (unless it's during fade out)
             if t < fade_out_start:
                 extrema = frame.getextrema()
@@ -305,7 +346,7 @@ def render_network_brand_bumper(
             raise RuntimeError(
                 f"Only generated {frames_generated} frames out of {num_frames} expected"
             )
-        
+
         # Validate frame sequence
         if not validate_frame_sequence(Path(tmpdir), num_frames, "frame_%04d.png"):
             raise RuntimeError("Frame sequence validation failed")
@@ -334,7 +375,7 @@ def render_network_brand_bumper(
             timeout=300.0,
             description=f"Rendering network brand video ({duration_sec}s, {num_frames} frames)",
         )
-        
+
         # Validate the generated video
         if not validate_video_file(silent_video, min_duration_sec=duration_sec * 0.9):
             raise RuntimeError(f"Generated video failed validation: {silent_video}")
@@ -345,11 +386,14 @@ def render_network_brand_bumper(
             output_path,
             music_volume=music_volume,
         )
-        
+
         # Final validation after music is added
-        if not validate_video_file(Path(output_path), min_duration_sec=duration_sec * 0.9):
-            raise RuntimeError(f"Final video with music failed validation: {output_path}")
+        if not validate_video_file(
+            Path(output_path), min_duration_sec=duration_sec * 0.9
+        ):
+            raise RuntimeError(
+                f"Final video with music failed validation: {output_path}"
+            )
 
 
 __all__ = ["render_network_brand_bumper"]
-

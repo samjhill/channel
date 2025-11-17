@@ -21,15 +21,15 @@ def sanitize_filename(text: str, max_length: int = 100) -> str:
     Convert a message text into a safe filename.
     """
     # Remove quotes and special characters
-    text = text.replace('"', '').replace("'", "")
+    text = text.replace('"', "").replace("'", "")
     # Replace em dashes and other special chars with hyphens
     text = text.replace("—", "-").replace(" - ", "-")
     # Remove or replace other problematic characters
-    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r"[^\w\s-]", "", text)
     # Replace whitespace with underscores
-    text = re.sub(r'\s+', '_', text)
+    text = re.sub(r"\s+", "_", text)
     # Remove leading/trailing underscores
-    text = text.strip('_')
+    text = text.strip("_")
     # Truncate if too long
     if len(text) > max_length:
         text = text[:max_length]
@@ -86,4 +86,3 @@ def generate_all_sassy_cards():
 
 if __name__ == "__main__":
     generate_all_sassy_cards()
-

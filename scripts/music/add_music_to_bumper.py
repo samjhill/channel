@@ -129,4 +129,3 @@ def add_random_music_to_bumper(
         # Clean up the temporary silent video if it is still around.
         if video.exists():
             video.unlink()
-

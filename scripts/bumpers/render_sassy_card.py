@@ -100,7 +100,12 @@ def resolve_sassy_config_path() -> Path:
     if container_default.exists():
         return container_default
 
-    repo_guess = Path(__file__).resolve().parents[2] / "server" / "config" / "sassy_messages.json"
+    repo_guess = (
+        Path(__file__).resolve().parents[2]
+        / "server"
+        / "config"
+        / "sassy_messages.json"
+    )
     return repo_guess
 
 
@@ -143,11 +148,12 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
     Tries multiple common system fonts before falling back to default.
     """
     import platform
+
     system = platform.system()
-    
+
     # List of fonts to try, in order of preference
     font_paths = []
-    
+
     if system == "Darwin":  # macOS
         font_paths = [
             "/System/Library/Fonts/Supplemental/Arial.ttf",
@@ -161,13 +167,15 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
             "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
             "/usr/share/fonts/TTF/DejaVuSans.ttf",
         ]
-    
+
     # Try common fallback paths
-    font_paths.extend([
-        "DejaVuSans.ttf",
-        "Arial.ttf",
-    ])
-    
+    font_paths.extend(
+        [
+            "DejaVuSans.ttf",
+            "Arial.ttf",
+        ]
+    )
+
     for font_path in font_paths:
         try:
             font = ImageFont.truetype(font_path, size)
@@ -180,7 +188,7 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont:
                 continue
         except (OSError, IOError):
             continue
-    
+
     # Last resort: default font (may not support em dashes)
     return ImageFont.load_default()
 
@@ -201,7 +209,7 @@ def _normalize_text_for_font(text: str, font: ImageFont.ImageFont) -> str:
                 return text  # Font supports em dash, return as-is
     except Exception:
         pass
-    
+
     # Font doesn't support em dash, replace with regular dash
     return text.replace("—", "-")
 
@@ -254,41 +262,43 @@ def _calculate_optimal_font_size(
     available_height = height
     if style.include_logo:
         available_height = int(height * 0.85)  # Reserve space for logo
-    
+
     # Account for padding
     available_height = int(available_height * 0.9)  # 10% padding
     max_text_width = int(width * style.max_text_width_ratio)
-    
+
     # Create a temporary image and draw context for measurements
     temp_img = Image.new("RGB", (width, height))
     temp_draw = ImageDraw.Draw(temp_img)
-    
+
     best_size = min_size
     low, high = min_size, max_size
-    
+
     while low <= high:
         mid = (low + high) // 2
         font = _load_font(mid)
-        
+
         # Wrap text with this font size
         lines = _wrap_lines(text, temp_draw, font, max_text_width)
-        
+
         if not lines:
             break
-        
+
         # Calculate total height needed
         bbox = font.getbbox("Ag")
         line_height = bbox[3] - bbox[1]
         line_spacing = int(line_height * 0.3)  # 30% of line height for spacing
-        total_text_height = len(lines) * line_height + max(len(lines) - 1, 0) * line_spacing
-        
+        total_text_height = (
+            len(lines) * line_height + max(len(lines) - 1, 0) * line_spacing
+        )
+
         # Check if it fits
         if total_text_height <= available_height:
             best_size = mid
             low = mid + 1  # Try larger
         else:
             high = mid - 1  # Too big, try smaller
-    
+
     return best_size
 
 
@@ -304,9 +314,18 @@ def _draw_background(canvas: Image.Image, style: CardStyle) -> None:
         painter = ImageDraw.Draw(base)
         for y in range(height):
             ratio = y / max(1, height - 1)
-            r = int(style.bg_color_top[0] + (style.bg_color_bottom[0] - style.bg_color_top[0]) * ratio)
-            g = int(style.bg_color_top[1] + (style.bg_color_bottom[1] - style.bg_color_top[1]) * ratio)
-            b = int(style.bg_color_top[2] + (style.bg_color_bottom[2] - style.bg_color_top[2]) * ratio)
+            r = int(
+                style.bg_color_top[0]
+                + (style.bg_color_bottom[0] - style.bg_color_top[0]) * ratio
+            )
+            g = int(
+                style.bg_color_top[1]
+                + (style.bg_color_bottom[1] - style.bg_color_top[1]) * ratio
+            )
+            b = int(
+                style.bg_color_top[2]
+                + (style.bg_color_bottom[2] - style.bg_color_top[2]) * ratio
+            )
             painter.line([(0, y), (width, y)], fill=(r, g, b))
 
     canvas.paste(base)
@@ -374,7 +393,7 @@ def render_sassy_card(
     # First load a test font to normalize text if needed
     test_font = _load_font(style.font_size)
     text = _normalize_text_for_font(text, test_font)
-    
+
     font_size = _calculate_optimal_font_size(text, width, height, style)
     font = _load_font(font_size)
 
@@ -384,12 +403,14 @@ def render_sassy_card(
 
         img = Image.new("RGB", (width, height))
         _draw_background(img, style)
-        
+
         # Validate that background was drawn (not all black unless style specifies black)
         # This is a basic check - if the image is completely black and style doesn't specify black, something went wrong
         if img.getextrema() == ((0, 0), (0, 0), (0, 0)):
             if style.bg_color_top != (0, 0, 0) or style.bg_color_bottom != (0, 0, 0):
-                raise RuntimeError("Background drawing resulted in all-black image, but style doesn't specify black")
+                raise RuntimeError(
+                    "Background drawing resulted in all-black image, but style doesn't specify black"
+                )
 
         draw = ImageDraw.Draw(img)
         max_text_width = int(width * style.max_text_width_ratio)
@@ -398,7 +419,9 @@ def render_sassy_card(
         bbox = font.getbbox("Ag")
         line_height = bbox[3] - bbox[1]
         line_spacing = int(line_height * 0.3)  # 30% of line height for spacing
-        total_text_height = len(lines) * line_height + max(len(lines) - 1, 0) * line_spacing
+        total_text_height = (
+            len(lines) * line_height + max(len(lines) - 1, 0) * line_spacing
+        )
 
         if style.text_align == "left":
             x_pos = int(width * 0.08)
@@ -445,7 +468,7 @@ def render_sassy_card(
             timeout=60.0,
             description=f"Rendering sassy card video ({duration_sec}s)",
         )
-        
+
         # Validate the generated video
         if not validate_video_file(silent_tmp, min_duration_sec=duration_sec * 0.9):
             raise RuntimeError(f"Generated video failed validation: {silent_tmp}")
@@ -456,7 +479,9 @@ def render_sassy_card(
         if not style.add_music:
             shutil.move(str(silent_tmp), str(output_path))
             # Final validation
-            if not validate_video_file(output_path, min_duration_sec=duration_sec * 0.9):
+            if not validate_video_file(
+                output_path, min_duration_sec=duration_sec * 0.9
+            ):
                 raise RuntimeError(f"Final video failed validation: {output_path}")
         else:
             add_random_music_to_bumper(
@@ -465,12 +490,15 @@ def render_sassy_card(
                 music_volume=cfg.get("music_volume", 0.2),
             )
             # Final validation after music is added
-            if not validate_video_file(output_path, min_duration_sec=duration_sec * 0.9):
-                raise RuntimeError(f"Final video with music failed validation: {output_path}")
+            if not validate_video_file(
+                output_path, min_duration_sec=duration_sec * 0.9
+            ):
+                raise RuntimeError(
+                    f"Final video with music failed validation: {output_path}"
+                )
 
 
 if __name__ == "__main__":
     target = Path.cwd() / "sassy_preview.mp4"
     render_sassy_card(str(target))
     print(f"Rendered sassy card to {target}")
-

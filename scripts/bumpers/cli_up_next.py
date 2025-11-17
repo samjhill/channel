@@ -17,7 +17,9 @@ def parse_args() -> argparse.Namespace:
         help="Output path for the MP4 (e.g., assets/bumpers/up_next/show.mp4)",
     )
     parser.add_argument("--width", type=int, default=1600, help="Video width in pixels")
-    parser.add_argument("--height", type=int, default=900, help="Video height in pixels")
+    parser.add_argument(
+        "--height", type=int, default=900, help="Video height in pixels"
+    )
     parser.add_argument(
         "--duration-sec", type=float, default=6.0, help="Duration in seconds"
     )
@@ -53,6 +55,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-

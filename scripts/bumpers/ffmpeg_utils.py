@@ -17,12 +17,12 @@ def run_ffmpeg(
 ) -> None:
     """
     Run an FFmpeg command with proper error handling and logging.
-    
+
     Args:
         cmd: FFmpeg command as a list of arguments
         timeout: Maximum time to wait in seconds (default 5 minutes)
         description: Description of the operation for error messages
-        
+
     Raises:
         RuntimeError: If FFmpeg fails or times out
     """
@@ -34,7 +34,7 @@ def run_ffmpeg(
             text=True,
             timeout=timeout,
         )
-        
+
         if result.returncode != 0:
             error_msg = f"{description} failed with return code {result.returncode}"
             if result.stderr:
@@ -42,7 +42,7 @@ def run_ffmpeg(
             if result.stdout:
                 error_msg += f"\nFFmpeg stdout:\n{result.stdout}"
             raise RuntimeError(error_msg)
-            
+
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"{description} timed out after {timeout} seconds")
     except FileNotFoundError:
@@ -52,29 +52,32 @@ def run_ffmpeg(
 def validate_video_file(video_path: Path, min_duration_sec: float = 0.5) -> bool:
     """
     Validate that a video file exists, is readable, and has valid content.
-    
+
     Args:
         video_path: Path to the video file to validate
         min_duration_sec: Minimum expected duration in seconds
-        
+
     Returns:
         True if video is valid, False otherwise
     """
     if not video_path.exists():
         print(f"[Validation] Video file does not exist: {video_path}", file=sys.stderr)
         return False
-    
+
     if video_path.stat().st_size == 0:
         print(f"[Validation] Video file is empty: {video_path}", file=sys.stderr)
         return False
-    
+
     # Use ffprobe to check if the video is valid
     try:
         probe_cmd = [
             "ffprobe",
-            "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
             str(video_path),
         ]
         result = subprocess.run(
@@ -83,14 +86,14 @@ def validate_video_file(video_path: Path, min_duration_sec: float = 0.5) -> bool
             text=True,
             timeout=10.0,
         )
-        
+
         if result.returncode != 0:
             print(
                 f"[Validation] ffprobe failed for {video_path}: {result.stderr}",
                 file=sys.stderr,
             )
             return False
-        
+
         try:
             duration = float(result.stdout.strip())
             if duration < min_duration_sec:
@@ -106,7 +109,7 @@ def validate_video_file(video_path: Path, min_duration_sec: float = 0.5) -> bool
                 file=sys.stderr,
             )
             return False
-            
+
     except subprocess.TimeoutExpired:
         print(
             f"[Validation] ffprobe timed out for {video_path}",
@@ -120,7 +123,7 @@ def validate_video_file(video_path: Path, min_duration_sec: float = 0.5) -> bool
             file=sys.stderr,
         )
         return True  # Assume valid if we can't check
-    
+
     return True
 
 
@@ -129,12 +132,12 @@ def validate_frame_sequence(
 ) -> bool:
     """
     Validate that all expected frames exist in the frame directory.
-    
+
     Args:
         frame_dir: Directory containing frames
         expected_count: Expected number of frames
         pattern: Frame filename pattern (e.g., "frame_%04d.png")
-        
+
     Returns:
         True if all frames exist, False otherwise
     """
@@ -145,7 +148,7 @@ def validate_frame_sequence(
         frame_path = frame_dir / frame_name
         if not frame_path.exists():
             missing_frames.append(frame_name)
-    
+
     if missing_frames:
         print(
             f"[Validation] Missing {len(missing_frames)} frames out of {expected_count}: "
@@ -153,6 +156,5 @@ def validate_frame_sequence(
             file=sys.stderr,
         )
         return False
-    
-    return True
 
+    return True

@@ -79,7 +79,7 @@ def test_normalize_show_weight_limits():
     show_min = {"label": "Show", "weight": -1.0}
     normalized_min = normalize_show(show_min)
     assert normalized_min["weight"] == 0.1  # Minimum
-    
+
     show_max = {"label": "Show", "weight": 10.0}
     normalized_max = normalize_show(show_max)
     assert normalized_max["weight"] == 5.0  # Maximum
@@ -158,11 +158,11 @@ def test_validate_settings():
     """Test settings validation."""
     valid_settings = {"channels": [{"id": "test", "name": "Test"}]}
     validate_settings(valid_settings)  # Should not raise
-    
+
     invalid_settings = {}
     with pytest.raises(ValueError, match="channels"):
         validate_settings(invalid_settings)
-    
+
     empty_channels = {"channels": []}
     with pytest.raises(ValueError, match="At least one channel"):
         validate_settings(empty_channels)
@@ -173,11 +173,12 @@ def test_load_and_save_settings(temp_dir: Path, monkeypatch):
     """Test loading and saving settings."""
     config_file = temp_dir / "channel_settings.json"
     monkeypatch.setenv("CHANNEL_CONFIG", str(config_file))
-    
+
     import server.api.settings_service as ss_module
+
     ss_module._settings_cache = None
     ss_module._config_path_cache = None
-    
+
     # Save settings
     settings = {
         "channels": [
@@ -193,7 +194,7 @@ def test_load_and_save_settings(temp_dir: Path, monkeypatch):
         ]
     }
     save_settings(settings)
-    
+
     # Load settings
     loaded = load_settings()
     assert loaded["channels"][0]["id"] == "test-channel"
@@ -212,11 +213,12 @@ def test_list_channels(temp_dir: Path, monkeypatch):
     }
     config_file.write_text(json.dumps(settings, indent=2))
     monkeypatch.setenv("CHANNEL_CONFIG", str(config_file))
-    
+
     import server.api.settings_service as ss_module
+
     ss_module._settings_cache = None
     ss_module._config_path_cache = None
-    
+
     channels = list_channels()
     assert len(channels) == 2
     assert channels[0]["id"] == "channel-1"
@@ -235,16 +237,17 @@ def test_get_channel(temp_dir: Path, monkeypatch):
     }
     config_file.write_text(json.dumps(settings, indent=2))
     monkeypatch.setenv("CHANNEL_CONFIG", str(config_file))
-    
+
     import server.api.settings_service as ss_module
+
     ss_module._settings_cache = None
     ss_module._config_path_cache = None
-    
+
     channel = get_channel("channel-1")
     assert channel is not None
     assert channel["id"] == "channel-1"
     assert channel["name"] == "Channel 1"
-    
+
     assert get_channel("nonexistent") is None
 
 
@@ -259,11 +262,12 @@ def test_replace_channel(temp_dir: Path, monkeypatch):
     }
     config_file.write_text(json.dumps(settings, indent=2))
     monkeypatch.setenv("CHANNEL_CONFIG", str(config_file))
-    
+
     import server.api.settings_service as ss_module
+
     ss_module._settings_cache = None
     ss_module._config_path_cache = None
-    
+
     updated = {
         "id": "channel-1",
         "name": "Updated Channel",
@@ -275,12 +279,11 @@ def test_replace_channel(temp_dir: Path, monkeypatch):
     }
     result = replace_channel("channel-1", updated)
     assert result["name"] == "Updated Channel"
-    
+
     # Verify it was saved
     loaded = load_settings()
     assert loaded["channels"][0]["name"] == "Updated Channel"
-    
+
     # Test replacing non-existent channel
     with pytest.raises(KeyError):
         replace_channel("nonexistent", updated)
-

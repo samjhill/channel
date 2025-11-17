@@ -21,7 +21,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.bumpers.ffmpeg_utils import run_ffmpeg, validate_video_file, validate_frame_sequence
+from scripts.bumpers.ffmpeg_utils import (
+    run_ffmpeg,
+    validate_video_file,
+    validate_frame_sequence,
+)
 
 # Brand palette
 STEEL_BLUE = "#475D92"
@@ -193,7 +197,9 @@ def create_pattern_layer(
 
 
 def add_grain(
-    image: Image.Image, opacity: float = 0.25, noise_rng: Optional[np.random.Generator] = None
+    image: Image.Image,
+    opacity: float = 0.25,
+    noise_rng: Optional[np.random.Generator] = None,
 ) -> Image.Image:
     if opacity <= 0:
         return image
@@ -282,7 +288,9 @@ def render_up_next_bumper(
 
     num_frames = int(duration_sec * fps)
     if num_frames == 0:
-        raise RuntimeError(f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})")
+        raise RuntimeError(
+            f"Invalid frame count: {num_frames} (duration={duration_sec}s, fps={fps})"
+        )
 
     try:
         base_logo = Image.open(logo_path).convert("RGBA")
@@ -341,21 +349,22 @@ def render_up_next_bumper(
         for idx in range(num_frames):
             t = idx / fps
 
-            frame = create_vertical_gradient(width, height, top_gradient, bottom_gradient)
+            frame = create_vertical_gradient(
+                width, height, top_gradient, bottom_gradient
+            )
             brightness_jitter = 1 + brightness_amp * math.sin(
                 2 * math.pi * brightness_freq * t + brightness_phase
             )
-            frame_np = (
-                np.clip(
-                    np.array(frame, dtype=np.float32) * brightness_jitter,
-                    0,
-                    255,
-                ).astype(np.uint8)
-            )
+            frame_np = np.clip(
+                np.array(frame, dtype=np.float32) * brightness_jitter,
+                0,
+                255,
+            ).astype(np.uint8)
             frame = Image.fromarray(frame_np).convert("RGBA")
             pattern_factor = clamp(
                 0.6
-                + pattern_amp * math.sin(2 * math.pi * pattern_freq * t + pattern_phase),
+                + pattern_amp
+                * math.sin(2 * math.pi * pattern_freq * t + pattern_phase),
                 0.1,
                 1.0,
             )
@@ -397,7 +406,9 @@ def render_up_next_bumper(
             if text_alpha > 0:
                 slide_offset = int((1 - text_alpha) * slide_base)
                 center_x = width // 2
-                wiggle = int(text_wiggle_amp * math.sin(2 * math.pi * text_wiggle_freq * t))
+                wiggle = int(
+                    text_wiggle_amp * math.sin(2 * math.pi * text_wiggle_freq * t)
+                )
                 up_next_y = int(height * 0.32) + slide_offset + wiggle
                 divider_y = up_next_y + 120
                 title_y = divider_y + 60
@@ -440,7 +451,10 @@ def render_up_next_bumper(
                     anchor="ma",
                 )
                 if episode_label_display and episode_font:
-                    subtitle_fill = (*ImageColor.getrgb(PAPER_WHITE), int(255 * text_alpha))
+                    subtitle_fill = (
+                        *ImageColor.getrgb(PAPER_WHITE),
+                        int(255 * text_alpha),
+                    )
                     draw.text(
                         (center_x, subtitle_y),
                         episode_label_display,
@@ -459,7 +473,7 @@ def render_up_next_bumper(
             frame_path = os.path.join(tmpdir, f"frame_{idx:04d}.png")
             frame.convert("RGB").save(frame_path, "PNG")
             frames_generated += 1
-            
+
             # Validate frame is not all black (unless it's during fade out)
             if t < fade_out_anim.start:
                 extrema = frame.getextrema()
@@ -471,7 +485,7 @@ def render_up_next_bumper(
             raise RuntimeError(
                 f"Only generated {frames_generated} frames out of {num_frames} expected"
             )
-        
+
         # Validate frame sequence
         if not validate_frame_sequence(Path(tmpdir), num_frames, "frame_%04d.png"):
             raise RuntimeError("Frame sequence validation failed")
@@ -498,12 +512,12 @@ def render_up_next_bumper(
             timeout=300.0,
             description=f"Rendering up next video ({duration_sec}s, {num_frames} frames)",
         )
-        
+
         # Validate the generated video
-        if not validate_video_file(Path(output_path), min_duration_sec=duration_sec * 0.9):
+        if not validate_video_file(
+            Path(output_path), min_duration_sec=duration_sec * 0.9
+        ):
             raise RuntimeError(f"Generated video failed validation: {output_path}")
 
 
 __all__ = ["render_up_next_bumper"]
-
-

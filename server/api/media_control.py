@@ -65,7 +65,7 @@ def restart_media_server() -> bool:
 
     docker_bin = shutil.which("docker")
     container_name = os.environ.get(DEFAULT_CONTAINER_ENV, FALLBACK_CONTAINER_NAME)
-    
+
     if docker_bin and container_name:
         # Sync config file to container first (in case volume mount isn't syncing)
         config_path = REPO_ROOT / "server" / "config" / "channel_settings.json"
@@ -76,28 +76,38 @@ def restart_media_server() -> bool:
             if sync_success:
                 LOGGER.info("Config file synced to container successfully.")
             else:
-                LOGGER.warning("Failed to sync config file to container: %s", sync_output)
-        
+                LOGGER.warning(
+                    "Failed to sync config file to container: %s", sync_output
+                )
+
         # First, try to restart the container
         docker_cmd = f"{docker_bin} restart {shlex.quote(container_name)}"
         LOGGER.info("Attempting to restart Docker container: %s", container_name)
         restart_success, restart_output = _run_command(docker_cmd, capture_output=True)
-        
+
         # Always regenerate playlist after restart (or if restart failed)
         # This ensures the playlist reflects the latest config
         regenerate_cmd = f"{docker_bin} exec {shlex.quote(container_name)} python3 /app/generate_playlist.py"
         LOGGER.info("Regenerating playlist inside container...")
         regen_success, regen_output = _run_command(regenerate_cmd, capture_output=True)
-        
+
         if regen_success:
             LOGGER.info("Playlist regenerated inside container successfully.")
             if restart_success:
-                LOGGER.info("Docker container '%s' restarted and playlist regenerated.", container_name)
+                LOGGER.info(
+                    "Docker container '%s' restarted and playlist regenerated.",
+                    container_name,
+                )
             else:
-                LOGGER.warning("Docker restart failed, but playlist was regenerated: %s", restart_output)
+                LOGGER.warning(
+                    "Docker restart failed, but playlist was regenerated: %s",
+                    restart_output,
+                )
             return True
         else:
-            LOGGER.error("Failed to regenerate playlist inside container: %s", regen_output)
+            LOGGER.error(
+                "Failed to regenerate playlist inside container: %s", regen_output
+            )
             if restart_success:
                 LOGGER.warning("Container restarted but playlist regeneration failed.")
             return False
@@ -119,7 +129,5 @@ def restart_media_server() -> bool:
         LOGGER.error("Playlist regeneration timed out.")
     except Exception as exc:
         LOGGER.error("Failed to regenerate playlist on host: %s", exc)
-    
+
     return False
-
-

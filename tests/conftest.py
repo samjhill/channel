@@ -10,10 +10,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # Set test environment variables before importing modules
-os.environ["CHANNEL_CONFIG"] = str(Path(__file__).parent / "fixtures" / "test_channel_settings.json")
-os.environ["CHANNEL_PLAYLIST_PATH"] = str(Path(__file__).parent / "fixtures" / "test_playlist.txt")
-os.environ["CHANNEL_PLAYHEAD_PATH"] = str(Path(__file__).parent / "fixtures" / "test_playhead.json")
-os.environ["CHANNEL_WATCH_PROGRESS_PATH"] = str(Path(__file__).parent / "fixtures" / "test_watch_progress.json")
+os.environ["CHANNEL_CONFIG"] = str(
+    Path(__file__).parent / "fixtures" / "test_channel_settings.json"
+)
+os.environ["CHANNEL_PLAYLIST_PATH"] = str(
+    Path(__file__).parent / "fixtures" / "test_playlist.txt"
+)
+os.environ["CHANNEL_PLAYHEAD_PATH"] = str(
+    Path(__file__).parent / "fixtures" / "test_playhead.json"
+)
+os.environ["CHANNEL_WATCH_PROGRESS_PATH"] = str(
+    Path(__file__).parent / "fixtures" / "test_watch_progress.json"
+)
 
 
 @pytest.fixture
@@ -60,7 +68,7 @@ def test_playlist_file(temp_dir: Path) -> Path:
     playlist_file = temp_dir / "playlist.txt"
     media_dir = temp_dir / "media" / "Test Show" / "Season 01"
     media_dir.mkdir(parents=True, exist_ok=True)
-    
+
     # Create dummy video files
     episodes = [
         media_dir / "Episode 01.mp4",
@@ -69,7 +77,7 @@ def test_playlist_file(temp_dir: Path) -> Path:
     ]
     for ep in episodes:
         ep.write_text("fake video content")
-    
+
     playlist_content = "\n".join(str(ep) for ep in episodes)
     playlist_file.write_text(playlist_content)
     return playlist_file
@@ -80,7 +88,9 @@ def test_playhead_file(temp_dir: Path) -> Path:
     """Create a test playhead file."""
     playhead_file = temp_dir / "playhead.json"
     playhead_data = {
-        "current_path": str(temp_dir / "media" / "Test Show" / "Season 01" / "Episode 01.mp4"),
+        "current_path": str(
+            temp_dir / "media" / "Test Show" / "Season 01" / "Episode 01.mp4"
+        ),
         "current_index": 0,
         "playlist_mtime": 1234567890.0,
         "playlist_path": str(temp_dir / "playlist.txt"),
@@ -131,26 +141,28 @@ def api_client():
     """Create a test client for the FastAPI app."""
     from fastapi.testclient import TestClient
     from server.api.app import app
-    
+
     # Clear caches before each test
     import server.api.app as app_module
+
     app_module._segments_cache = None
     app_module._segments_playlist_mtime = 0.0
-    
+
     # Clear playlist service caches
     import server.playlist_service as ps_module
+
     ps_module._playlist_cache = None
     ps_module._playlist_mtime = 0.0
     ps_module._playhead_cache = None
     ps_module._playhead_mtime = 0.0
     ps_module._watch_progress_cache = None
     ps_module._watch_progress_mtime = 0.0
-    
+
     # Clear settings cache
     import server.api.settings_service as ss_module
+
     ss_module._settings_cache = None
     ss_module._settings_mtime = 0.0
     ss_module._channels_index = {}
-    
-    return TestClient(app)
 
+    return TestClient(app)
