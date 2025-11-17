@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchSassyConfig, updateSassyConfig, type SassyConfig } from "../api";
+import { fetchSassyConfig, updateSassyConfig, type SassyConfig } from "../api.ts";
 
 export default function BumperManager() {
   const [config, setConfig] = useState<SassyConfig | null>(null);
