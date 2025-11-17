@@ -247,7 +247,8 @@ def stream_file(
         "-maxrate",
         "3000k",
         "-bufsize",
-        "6000k",
+        "9000k",  # Increased from 6000k to 9000k (3x maxrate)
+        # Larger buffer helps maintain consistent bitrate and reduces stalls
         "-g",
         "60",  # GOP size matches segment duration (6s * 10fps typical = 60 frames)
         "-sc_threshold",
