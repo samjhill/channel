@@ -307,34 +307,35 @@
                   }
                   
                   // Always check if we're behind the live edge and seek forward if needed
-                  // But be more conservative to avoid buffer stalls
-                  if (currentPlaybackTime > 0 && liveEdge > 0) {
+                  // But be very conservative to avoid buffer stalls
+                  if (currentPlaybackTime > 0 && liveEdge > 0 && !recoveryInProgress) {
                     const latency = liveEdge - currentPlaybackTime;
                     // Only seek if we have enough buffer (check buffered ranges)
                     const buffered = video.buffered;
                     let hasGoodBuffer = false;
+                    let bufferRemaining = 0;
                     if (buffered.length > 0) {
                       for (let i = 0; i < buffered.length; i++) {
                         if (currentPlaybackTime >= buffered.start(i) && currentPlaybackTime < buffered.end(i)) {
-                          const remaining = buffered.end(i) - currentPlaybackTime;
-                          hasGoodBuffer = remaining > 5; // Need at least 5 seconds buffer before seeking
+                          bufferRemaining = buffered.end(i) - currentPlaybackTime;
+                          hasGoodBuffer = bufferRemaining > 10; // Need at least 10 seconds buffer before seeking
                           break;
                         }
                       }
                     }
                     
-                    // Only seek if we're significantly behind AND have good buffer
-                    if (latency > 30 && latency < 120 && hasGoodBuffer) {
-                      // We're 30-120 seconds behind and have buffer - seek forward to catch up
-                      console.log(`⚠️ Behind live edge by ${latency.toFixed(1)}s (with buffer), seeking forward...`);
-                      const seekTime = Math.max(0, liveEdge - 6);
+                    // Only seek if we're significantly behind AND have good buffer AND not recovering
+                    if (latency > 60 && latency < 180 && hasGoodBuffer) {
+                      // We're 60-180 seconds behind and have good buffer - seek forward to catch up
+                      console.log(`⚠️ Behind live edge by ${latency.toFixed(1)}s (${bufferRemaining.toFixed(1)}s buffer), seeking forward...`);
+                      const seekTime = Math.max(0, liveEdge - 8); // Seek 8s before live edge for safety
                       video.currentTime = seekTime;
                       video.play().catch(() => {});
-                    } else if (latency > 120) {
-                      // If we're way behind (120+ seconds), always seek regardless of buffer
+                    } else if (latency > 180 && bufferRemaining > 5) {
+                      // If we're way behind (180+ seconds), seek if we have at least 5s buffer
                       // This handles cases where we're stuck on old content
-                      console.log(`⚠️ Way behind live edge (${latency.toFixed(1)}s), forcing seek forward...`);
-                      const seekTime = Math.max(0, liveEdge - 6);
+                      console.log(`⚠️ Way behind live edge (${latency.toFixed(1)}s, ${bufferRemaining.toFixed(1)}s buffer), forcing seek forward...`);
+                      const seekTime = Math.max(0, liveEdge - 8);
                       video.currentTime = seekTime;
                       video.play().catch(() => {});
                     }
@@ -459,66 +460,93 @@
                 lastStallRecovery = now;
                 recoveryInProgress = true;
                 
-                // Try to seek to live edge first - this might help if we're behind
-                try {
-                  const levels = hls.levels;
-                  if (levels && levels.length > 0) {
-                    const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
-                    const level = levels[currentLevel];
-                    if (level && level.details) {
-                      const fragments = level.details.fragments;
-                      if (fragments && fragments.length > 0) {
-                        const lastFragment = fragments[fragments.length - 1];
-                        const liveEdge = lastFragment.start + lastFragment.duration;
-                        const currentTime = video.currentTime;
-                        const latency = liveEdge - currentTime;
-                        
-                        // If we're significantly behind, seek forward to live edge
-                        if (latency > 5 && latency < 300) {
-                          console.log(`Buffer stall - seeking to live edge (${latency.toFixed(1)}s behind)`);
-                          video.currentTime = Math.max(0, liveEdge - 6);
-                        }
-                      }
-                    }
-                  }
-                } catch (e) {
-                  console.error('Error seeking during buffer stall recovery:', e);
-                }
-                
-                // Pause briefly to let buffer rebuild, then resume
+                // Don't seek immediately when buffer is low - let it rebuild first
+                // Pause to let buffer rebuild, then check if we need to seek
                 if (!video.paused) {
                   video.pause();
                 }
                 
-                // Wait and check buffer state before resuming
+                // Wait longer for buffer to rebuild before attempting any seeks
                 setTimeout(() => {
                   const buffered = video.buffered;
                   let hasBuffer = false;
+                  let bufferRemaining = 0;
                   if (buffered.length > 0) {
                     const currentTime = video.currentTime;
                     for (let i = 0; i < buffered.length; i++) {
                       if (currentTime >= buffered.start(i) && currentTime < buffered.end(i)) {
-                        const remaining = buffered.end(i) - currentTime;
-                        hasBuffer = remaining > 2; // Need at least 2 seconds
+                        bufferRemaining = buffered.end(i) - currentTime;
+                        hasBuffer = bufferRemaining > 3; // Need at least 3 seconds
                         break;
                       }
                     }
                   }
                   
                   if (hasBuffer && video.readyState >= video.HAVE_FUTURE_DATA) {
-                    console.log('Buffer rebuilt, resuming playback');
+                    console.log(`Buffer rebuilt (${bufferRemaining.toFixed(1)}s remaining), resuming playback`);
                     video.play().catch(() => {});
+                    recoveryInProgress = false;
                   } else {
-                    console.log('Buffer still low, waiting for buffer to rebuild...');
-                    // Don't force another manifest reload immediately - wait a bit
-                    // The periodic reload will handle it, or we'll try again on next stall
-                    // Wait a bit longer for segments to load naturally
-                    setTimeout(() => {
-                      video.play().catch(() => {});
-                    }, 2000);
+                    // Buffer still low, try seeking to live edge only if we have some buffer
+                    // and we're significantly behind
+                    try {
+                      const levels = hls.levels;
+                      if (levels && levels.length > 0) {
+                        const currentLevel = hls.currentLevel >= 0 ? hls.currentLevel : 0;
+                        const level = levels[currentLevel];
+                        if (level && level.details) {
+                          const fragments = level.details.fragments;
+                          if (fragments && fragments.length > 0) {
+                            const lastFragment = fragments[fragments.length - 1];
+                            const liveEdge = lastFragment.start + lastFragment.duration;
+                            const currentTime = video.currentTime;
+                            const latency = liveEdge - currentTime;
+                            
+                            // Only seek if we're way behind (60+ seconds) and have at least 1s buffer
+                            // This prevents seeking when buffer is too low
+                            if (latency > 60 && bufferRemaining > 1) {
+                              console.log(`Buffer still low but way behind (${latency.toFixed(1)}s), seeking to live edge`);
+                              video.currentTime = Math.max(0, liveEdge - 8); // Seek 8s before live edge for safety
+                              setTimeout(() => {
+                                video.play().catch(() => {});
+                                recoveryInProgress = false;
+                              }, 500);
+                            } else {
+                              // Not far enough behind or buffer too low - just wait longer
+                              console.log(`Buffer still low (${bufferRemaining.toFixed(1)}s), waiting longer...`);
+                              setTimeout(() => {
+                                video.play().catch(() => {});
+                                recoveryInProgress = false;
+                              }, 3000); // Wait 3 seconds for buffer to rebuild naturally
+                            }
+                          } else {
+                            // No fragments available, just wait
+                            setTimeout(() => {
+                              video.play().catch(() => {});
+                              recoveryInProgress = false;
+                            }, 2000);
+                          }
+                        } else {
+                          setTimeout(() => {
+                            video.play().catch(() => {});
+                            recoveryInProgress = false;
+                          }, 2000);
+                        }
+                      } else {
+                        setTimeout(() => {
+                          video.play().catch(() => {});
+                          recoveryInProgress = false;
+                        }, 2000);
+                      }
+                    } catch (e) {
+                      console.error('Error during buffer stall recovery:', e);
+                      setTimeout(() => {
+                        video.play().catch(() => {});
+                        recoveryInProgress = false;
+                      }, 2000);
+                    }
                   }
-                  recoveryInProgress = false;
-                }, 1000); // Reduced from 2000ms to 1000ms for faster recovery
+                }, 2000); // Wait 2 seconds before checking buffer state
               }
             }
           }
