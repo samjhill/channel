@@ -70,8 +70,73 @@ class PlaylistUpdateRequest(BaseModel):
 
 
 @app.get("/api/healthz")
-def health_check() -> Dict[str, str]:
-    return {"status": "ok"}
+def health_check() -> Dict[str, Any]:
+    """Health check endpoint that verifies streaming processes are running."""
+    import subprocess
+    
+    health_status = {
+        "status": "ok",
+        "timestamp": time.time(),
+        "checks": {},
+    }
+    
+    # Check if playlist file exists and is recent (updated in last 5 minutes)
+    try:
+        entries, mtime = load_playlist_entries()
+        playlist_age = time.time() - mtime
+        health_status["checks"]["playlist"] = {
+            "status": "ok" if playlist_age < 300 else "stale",
+            "age_seconds": playlist_age,
+            "entries": len(entries),
+        }
+        if playlist_age > 300:
+            health_status["status"] = "degraded"
+    except Exception as e:
+        health_status["checks"]["playlist"] = {
+            "status": "error",
+            "error": str(e),
+        }
+        health_status["status"] = "error"
+    
+    # Check if playhead file exists and is recent (updated in last 2 minutes)
+    try:
+        playhead = load_playhead_state()
+        if playhead:
+            updated_at = playhead.get("updated_at", 0)
+            playhead_age = time.time() - updated_at if updated_at > 0 else 999999
+            health_status["checks"]["playhead"] = {
+                "status": "ok" if playhead_age < 120 else "stale",
+                "age_seconds": playhead_age,
+                "current_path": playhead.get("current_path"),
+            }
+            if playhead_age > 120:
+                health_status["status"] = "degraded"
+        else:
+            health_status["checks"]["playhead"] = {"status": "ok", "note": "no playhead"}
+    except Exception as e:
+        health_status["checks"]["playhead"] = {
+            "status": "error",
+            "error": str(e),
+        }
+        health_status["status"] = "degraded"
+    
+    # Check if processes are running (if we can access Docker)
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "tvchannel", "pgrep", "-f", "process_monitor.py"],
+            capture_output=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            health_status["checks"]["process_monitor"] = {"status": "ok"}
+        else:
+            health_status["checks"]["process_monitor"] = {"status": "not_running"}
+            health_status["status"] = "error"
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception):
+        # Docker not available or can't check - don't fail health check
+        health_status["checks"]["process_monitor"] = {"status": "unknown"}
+    
+    return health_status
 
 
 @app.get("/api/channels")
