@@ -1,60 +1,54 @@
 # Your Own TV Channel 📺
 
-Create your own always-on TV channel from a folder of videos. Stream your favorite shows, movies, or home videos 24/7—just like a real TV network, but completely yours. Perfect for running on a Raspberry Pi with Kodi, or watch it in any web browser.
+Ever wanted your own 24/7 TV channel? This project lets you turn a folder full of videos into a continuous stream that runs all day, every day. It's like having your own personal TV network—perfect for running on a Raspberry Pi with Kodi, or just watching in your browser.
 
-## ✨ Features
+I built this because I wanted to watch my collection of shows and movies in a more TV-like way, with bumpers and everything. It's been a fun project and I hope you find it useful too.
 
-- 🎬 **Automatic Playlist Generation** - Scans your media library and creates a seamless 24/7 stream
-- 🎨 **Dynamic Bumpers** - "Up Next" cards, sassy intermissions, and network branding bumpers
-- 🎮 **Web Admin Panel** - React-based control panel for managing channels, playlists, and settings
-- 📱 **Multiple Playback Modes** - Sequential or weighted random playback with per-show configuration
-- 🔄 **Watch Progress Tracking** - Automatically resumes from where you left off
-- 🎯 **Real-time Playlist Management** - Reorder or skip episodes without restarting the stream
-- 🏷️ **Smart Metadata** - Automatic season/episode detection from filenames
-- 🎵 **Music Integration** - Background music for bumpers from your music library
+## What It Does
 
-## 📋 Table of Contents
+The basic idea is simple: you point it at a folder of videos, and it creates a never-ending playlist that streams 24/7. But there's a lot of nice touches:
 
-- [Quick Start](#-quick-start)
-- [Project Structure](#-project-structure)
-- [Server Setup](#-server-setup)
-- [Channel Admin](#-channel-admin)
-- [Bumpers System](#-bumpers-system)
-- [Playlist Management](#-playlist-management)
-- [Client Setup](#-client-setup)
-- [Configuration](#-configuration)
-- [API Reference](#-api-reference)
-- [Troubleshooting](#-troubleshooting)
+- **Automatic playlist generation** - Just drop your videos in folders and it figures out the rest
+- **"Up Next" bumpers** - Little cards that show what's coming up, just like real TV
+- **Sassy intermissions** - Short cards between episodes (inspired by Adult Swim's style)
+- **Web admin panel** - A nice React interface for managing everything
+- **Watch progress tracking** - Remembers where you left off
+- **Real-time playlist control** - Skip episodes or reorder the queue without restarting
+- **Smart metadata** - Automatically detects season/episode numbers from filenames
+- **Network branding** - Overlays your logo on the stream (the "bug" in the corner)
 
-## 🚀 Quick Start
+## Quick Start
 
-### Prerequisites
+### What You'll Need
 
-- Docker and Docker Compose (for server)
-- Python 3.9+ (for local development)
-- Node.js 18+ (for admin UI development)
-- Video files in a supported format (MP4, MKV, AVI, etc.)
+- Docker (for running the server)
+- Some video files (MP4, MKV, AVI, etc.)
+- Python 3.9+ if you want to develop locally
+- Node.js 18+ if you want to work on the admin UI
 
-### 1. Prepare Your Media
+### Step 1: Organize Your Videos
 
-Organize your videos in a folder structure like:
+Put your videos in folders like this:
 
 ```
 ~/tv_media/
-├── Show Name 1/
+├── Your Show Name/
 │   ├── Season 01/
 │   │   ├── Episode 01.mp4
 │   │   └── Episode 02.mp4
 │   └── Season 02/
 │       └── ...
-└── Show Name 2/
+└── Another Show/
     └── ...
 ```
 
-### 2. Start the Server
+The system is pretty flexible with naming—it can figure out seasons and episodes from patterns like `S02E05`, `2x05`, or even `Season 02/Episode 05.mp4`.
+
+### Step 2: Start the Server
+
+Build and run the Docker container:
 
 ```bash
-# Build and run the Docker container
 docker build -t tvchannel -f server/Dockerfile .
 docker run -d \
   -p 8080:8080 \
@@ -64,109 +58,52 @@ docker run -d \
   --name tvchannel tvchannel
 ```
 
-Your stream is now available at: `http://localhost:8080/channel/stream.m3u8`
+That's it! Your stream should now be available at `http://localhost:8080/channel/stream.m3u8`
 
-### 3. Watch the Channel
+### Step 3: Watch It
 
-**Web Browser:**
+You've got a few options:
+
+**In a web browser:**
 ```bash
 cd client/web_test
 ./serve_test_client.sh
-# Open http://localhost:8081 in Chrome or Safari
+# Then open http://localhost:8081 in Chrome or Safari
 ```
 
-**VLC:**
+**In VLC:**
 - Open VLC → Media → Open Network Stream
-- URL: `http://localhost:8080/channel/stream.m3u8`
+- Paste: `http://localhost:8080/channel/stream.m3u8`
 
-**Kodi (Raspberry Pi):**
+**On a Raspberry Pi with Kodi:**
 ```bash
 cd client/pi_setup
 bash install_kodi.sh
-bash configure_kodi.sh <SERVER_IP>
+bash configure_kodi.sh <YOUR_SERVER_IP>
 sudo reboot
 ```
 
-## 📁 Project Structure
+After reboot, Kodi will automatically start and play your channel. It's pretty cool to see it boot up and start streaming.
 
-```
-channel/
-├── server/                 # Dockerized streaming server
-│   ├── api/               # FastAPI admin API
-│   │   ├── app.py        # Main API endpoints
-│   │   ├── media_control.py
-│   │   └── settings_service.py
-│   ├── config/           # Channel configuration
-│   │   ├── channel_settings.json
-│   │   └── sassy_messages.json
-│   ├── hls/              # HLS stream files (generated)
-│   ├── generate_playlist.py    # Playlist generator
-│   ├── stream.py         # FFmpeg streaming loop
-│   ├── playlist_service.py     # Playlist utilities
-│   ├── Dockerfile
-│   └── nginx.conf
-├── ui/channel-admin/      # React admin panel
-│   └── src/
-│       ├── components/   # React components
-│       └── api.ts        # API client
-├── client/
-│   ├── pi_setup/         # Kodi automation scripts
-│   └── web_test/         # Browser HLS player
-├── assets/
-│   ├── branding/         # Network logos
-│   ├── bumpers/          # Generated bumpers
-│   └── music/            # Background music tracks
-└── scripts/
-    └── bumpers/          # Bumper generation utilities
-```
+## How It Works
 
-## 🖥️ Server Setup
+Here's the basic flow:
 
-### Docker Deployment (Recommended)
+1. **Playlist generation** - `generate_playlist.py` scans your media folder and creates a playlist file. It also generates bumpers (those "Up Next" cards and intermissions) and mixes them in.
 
-The server runs in a Docker container with FFmpeg and Nginx for HLS streaming.
+2. **Streaming** - `stream.py` reads the playlist and uses FFmpeg to stream each video to HLS format. It runs in a loop, so when it reaches the end, it starts over.
 
-```bash
-docker build -t tvchannel -f server/Dockerfile .
-docker run -d \
-  -p 8080:8080 \
-  -v /path/to/videos:/media/tvchannel \
-  -v "$(pwd)/assets:/app/assets" \
-  -v "$(pwd)/server/config:/app/config" \
-  --name tvchannel tvchannel
-```
+3. **Serving** - Nginx serves the HLS stream files so clients can watch.
 
-**Environment Variables:**
-- `CHANNEL_CONFIG` - Path to channel settings JSON (default: `/app/config/channel_settings.json`)
-- `HBN_BUMPERS_ROOT` - Base path for bumper storage (default: `/app/assets/bumpers`)
-- `CHANNEL_PLAYLIST_PATH` - Playlist file path (default: `/app/hls/playlist.txt`)
-- `CHANNEL_PLAYHEAD_PATH` - Playhead tracking file (default: `/app/hls/playhead.json`)
-- `CHANNEL_WATCH_PROGRESS_PATH` - Watch progress file (default: `/app/hls/watch_progress.json`)
-- `PLAYLIST_EPISODE_LIMIT` - Max episodes to generate (default: `500`)
-- `PLAYLIST_SEED_LIMIT` - Episodes to write before bumper rendering (default: `50`)
+4. **Admin interface** - A FastAPI backend and React frontend let you manage channels, reorder playlists, skip episodes, etc.
 
-### Local Development
+The playlist is just a text file with one file path per line. Episodes, bumpers, and intermissions are all mixed together. When you want to skip something or reorder, the system edits this file in place—no need to restart the stream.
 
-For development without Docker:
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run playlist generator
-python server/generate_playlist.py
-
-# Start streaming
-python server/stream.py
-
-# Start admin API (separate terminal)
-cd server/api
-uvicorn app:app --reload --port 8000
-```
+## Configuration
 
 ### Channel Settings
 
-Edit `server/config/channel_settings.json` to configure your channel:
+Edit `server/config/channel_settings.json` to set up your channel. Here's a basic example:
 
 ```json
 {
@@ -193,45 +130,57 @@ Edit `server/config/channel_settings.json` to configure your channel:
 }
 ```
 
-**Configuration Options:**
-- `playback_mode` - `"sequential"` or `"random"` for channel-wide playback
-- `loop_entire_library` - Whether to loop through all episodes
-- `shows` - Array of show configurations with per-show playback mode and weight
-- Each show can `"inherit"`, `"sequential"`, or `"random"` playback mode
+**Playback modes:**
+- `sequential` - Episodes play in order, shows rotate round-robin style
+- `random` - Episodes are picked randomly based on show weights
+
+Each show can have its own playback mode, or it can inherit from the channel. Shows also have weights (1.0 is default, higher = plays more often in random mode).
 
 ### Network Branding
 
-The channel automatically overlays a network "bug" (logo) in the top-right corner of all streams. Customize it by:
+The system automatically overlays a logo "bug" in the top-right corner of all streams. To customize it:
 
-1. Replace `assets/branding/hbn_logo_bug.png` with your logo
-2. Or set environment variables:
-   - `HBN_BUG_PATH` - Path to logo file
-   - `HBN_BUG_POSITION` - Position (default: `"topright"`)
-   - `HBN_BUG_HEIGHT_FRACTION` - Size relative to video height (default: `0.12`)
+1. Replace `assets/branding/hbn_logo_bug.png` with your own logo
+2. Or set these environment variables:
+   - `HBN_BUG_PATH` - Path to your logo file
+   - `HBN_BUG_POSITION` - Where to put it (default: `"topright"`)
+   - `HBN_BUG_HEIGHT_FRACTION` - Size relative to video (default: `0.12`)
    - `HBN_BUG_ALPHA` - Opacity 0-1 (default: `0.8`)
 
-## 🎛️ Channel Admin
+### Environment Variables
 
-### Admin API Setup
+There are a bunch of environment variables you can set if you need to customize things:
 
-The FastAPI admin service provides a REST API for managing channels:
+- `CHANNEL_CONFIG` - Path to channel settings (default: `/app/config/channel_settings.json`)
+- `HBN_BUMPERS_ROOT` - Where to store bumpers (default: `/app/assets/bumpers`)
+- `CHANNEL_PLAYLIST_PATH` - Playlist file location (default: `/app/hls/playlist.txt`)
+- `CHANNEL_PLAYHEAD_PATH` - Current playback position (default: `/app/hls/playhead.json`)
+- `CHANNEL_WATCH_PROGRESS_PATH` - Watch history (default: `/app/hls/watch_progress.json`)
+- `PLAYLIST_EPISODE_LIMIT` - Max episodes to generate (default: `500`)
+- `PLAYLIST_SEED_LIMIT` - Episodes to write before bumper rendering (default: `50`)
+
+Most of these you probably won't need to change, but they're there if you do.
+
+## The Admin Panel
+
+There's a web-based admin interface for managing everything. It's built with React and connects to a FastAPI backend.
+
+### Running the Admin API
 
 ```bash
-# Install dependencies
+# Set up a virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-pip install fastapi uvicorn[standard] pydantic
+pip install -r requirements.txt
 
-# Run the API
+# Start the API
 cd server
 uvicorn api.app:app --reload --port 8000
 ```
 
-The API is available at `http://localhost:8000` with interactive docs at `http://localhost:8000/docs`.
+The API will be at `http://localhost:8000`, and there are interactive docs at `http://localhost:8000/docs` (FastAPI's auto-generated Swagger UI).
 
-### Admin UI Setup
-
-The React admin panel provides a web interface for channel management:
+### Running the Admin UI
 
 ```bash
 cd ui/channel-admin
@@ -239,44 +188,38 @@ npm install
 VITE_API_BASE=http://localhost:8000 npm run dev
 ```
 
-Open `http://localhost:5173` to access the admin panel.
+Then open `http://localhost:5173` in your browser.
 
-**For Production:**
-```bash
-npm run build
-# Serve the dist/ folder with nginx or any static file server
-```
+The admin panel lets you:
+- Update channel settings (media root, playback mode, etc.)
+- Discover shows in your media folder
+- Toggle shows on/off, adjust weights, set playback modes
+- View and reorder the upcoming playlist in real-time
+- Skip episodes without restarting the stream
 
-### Admin UI Features
+For production, just build it and serve the `dist/` folder with nginx or any static file server.
 
-- **Channel Settings** - Update media root, playback mode, and discover shows
-- **Show Management** - Toggle shows on/off, adjust weights, set playback modes
-- **Playlist Management** - View and reorder upcoming episodes in real-time
-- **Episode Skipping** - Skip unwanted episodes without restarting the stream
+## Bumpers
 
-## 🎬 Bumpers System
+Bumpers are those short video clips that play between content. There are three types:
 
 ### Up Next Bumpers
 
-Automatically generated 6-second cards that appear before each episode, showing what's coming up next.
+These are 6-second cards that show what's coming up next. They're automatically generated when the playlist is built. The system extracts the show name and episode info from the filename and creates a nice-looking card with a random gradient background.
 
-**Manual Generation:**
+You can also generate them manually:
 ```bash
 python -m scripts.bumpers.cli_up_next \
   --title "Show Name" \
   --out assets/bumpers/up_next/show_name.mp4
 ```
 
-**Customization:**
-- Season/episode metadata is automatically detected from filenames
-- Supports patterns like `S02E05`, `2x05`, or `Season 02/Episode 05.mp4`
-- Each bumper uses a randomized gradient and pattern treatment
-
 ### Sassy Cards
 
-Short intermission cards that can appear between episodes (inspired by Adult Swim).
+These are short intermission cards inspired by Adult Swim's style. They show random messages like "We'll be right back" or "Stay tuned" between episodes.
 
-**Configuration** (`server/config/sassy_messages.json`):
+Configure them in `server/config/sassy_messages.json`:
+
 ```json
 {
   "enabled": true,
@@ -291,24 +234,15 @@ Short intermission cards that can appear between episodes (inspired by Adult Swi
 }
 ```
 
-**Styles:**
-- `hbn-cozy` - Gradient background with logo and background music
-- `adult-swim-minimal` - Black and white minimal style
+The `probability_between_episodes` setting controls how often they appear (0.3 = 30% chance). There are two styles: `hbn-cozy` (gradient with logo and music) and `adult-swim-minimal` (black and white).
 
 ### Network Branding Bumpers
 
-Full network identity bumpers featuring the complete logo, displayed approximately every 25-30 episodes (about once per hour).
+These are full network identity bumpers with the complete logo. They play about once per hour (every 25-30 episodes). They're automatically generated on the first playlist build and include fade-in/scale animations with background music randomly selected from your `assets/music/` folder.
 
-- Automatically generated on first playlist build
-- 8-second duration with fade-in/scale animations
-- Background music randomly selected from `assets/music/`
-- Stored at `assets/bumpers/network/network_brand.mp4`
+## Playlist Management
 
-## 📋 Playlist Management
-
-### Playlist Structure
-
-The playlist is a simple text file (`/app/hls/playlist.txt`) with one file path per line:
+The playlist is just a text file (`/app/hls/playlist.txt`) with one file path per line. Episodes, bumpers, and intermissions are all mixed together:
 
 ```
 /media/tvchannel/Show 1/Season 01/Episode 01.mp4
@@ -318,332 +252,200 @@ The playlist is a simple text file (`/app/hls/playlist.txt`) with one file path 
 ...
 ```
 
-### Playback Modes
-
-**Sequential Mode:**
-- Episodes play in order
-- Shows are round-robin (one episode per show before cycling)
-- Ensures variety even with large seasons
-
-**Random Mode:**
-- Episodes selected randomly based on show weights
-- Higher weight = more frequent playback
-- Each show can have its own playback mode
-
 ### Watch Progress
 
-The system tracks which episodes you've watched and automatically resumes from where you left off:
+The system tracks which episodes you've watched in `watch_progress.json`. When you restart or regenerate the playlist, it automatically resumes from where you left off. If it can't find the last watched episode (maybe you deleted it), it just starts from the beginning.
 
-- Progress stored in `watch_progress.json`
-- Updated automatically when episodes finish
-- Resume position maintained across playlist regenerations
-- Falls back to beginning if watched episode not found
+### Real-time Editing
 
-### Real-time Playlist Editing
+One of my favorite features is that you can edit the playlist while it's playing. The admin UI lets you:
+- Reorder episodes in the upcoming queue
+- Skip episodes (removes them from the queue)
+- Skip the current episode (jumps to the next one immediately)
 
-Use the admin UI or API to:
+All of this happens by editing the playlist file in place—the streamer picks up the changes automatically. No restart needed.
 
-- **Reorder Episodes** - Move items up/down in the queue
-- **Skip Episodes** - Remove items from upcoming window
-- **Skip Current** - Jump to the next episode immediately
+## Development
 
-Changes take effect without restarting the stream—the playlist file is edited in-place.
+### Local Setup (Without Docker)
 
-## 🖥️ Client Setup
-
-### Web Browser (Local Testing)
+If you want to develop locally:
 
 ```bash
-cd client/web_test
-chmod +x serve_test_client.sh
-./serve_test_client.sh
+# Install dependencies
+pip install -r requirements.txt
+
+# Generate the playlist
+python server/generate_playlist.py
+
+# Start streaming
+python server/stream.py
+
+# In another terminal, start the admin API
+cd server/api
+uvicorn app:app --reload --port 8000
 ```
 
-Open `http://localhost:8081` in Chrome or Safari. Chrome uses hls.js for playback; Safari has native HLS support.
+### Project Structure
 
-### Kodi on Raspberry Pi
+```
+channel/
+├── server/                 # The streaming server
+│   ├── api/               # FastAPI admin API
+│   ├── config/           # Configuration files
+│   ├── hls/              # Generated HLS stream files
+│   ├── generate_playlist.py
+│   ├── stream.py         # Main streaming loop
+│   └── playlist_service.py
+├── ui/channel-admin/      # React admin panel
+├── client/               # Client setup scripts
+│   ├── pi_setup/         # Kodi automation
+│   └── web_test/         # Browser player
+├── assets/               # Logos, bumpers, music
+└── scripts/              # Bumper generation utilities
+```
+
+### Testing
+
+There's a test suite! Run it with:
 
 ```bash
-# SSH into your Raspberry Pi
-cd channel/client/pi_setup
+# Python tests
+pytest tests/ -v
 
-# Install Kodi and IPTV Simple Client
-bash install_kodi.sh
-
-# Configure to auto-start and play your channel
-bash configure_kodi.sh <YOUR_SERVER_IP>
-
-# Reboot to start Kodi
-sudo reboot
+# TypeScript/React tests
+cd ui/channel-admin
+npm test
 ```
 
-After reboot, Kodi will automatically start and begin streaming your channel.
+The GitHub Actions workflow runs these automatically on push.
 
-### VLC Media Player
+## Troubleshooting
 
-1. Open VLC
-2. Media → Open Network Stream
-3. Enter URL: `http://YOUR_SERVER_IP:8080/channel/stream.m3u8`
-4. Click Play
+### Stream Not Playing
 
-## ⚙️ Configuration
+First, check the container logs:
+```bash
+docker logs tvchannel
+```
 
-### Environment Variables
+Make sure your media files are actually there:
+```bash
+docker exec tvchannel ls -la /media/tvchannel
+```
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CHANNEL_CONFIG` | `/app/config/channel_settings.json` | Channel settings file path |
-| `HBN_BUMPERS_ROOT` | `/app/assets/bumpers` | Base directory for bumper storage |
-| `CHANNEL_PLAYLIST_PATH` | `/app/hls/playlist.txt` | Playlist file location |
-| `CHANNEL_PLAYHEAD_PATH` | `/app/hls/playhead.json` | Current playback position |
-| `CHANNEL_WATCH_PROGRESS_PATH` | `/app/hls/watch_progress.json` | Watch history |
-| `PLAYLIST_EPISODE_LIMIT` | `500` | Maximum episodes to generate |
-| `PLAYLIST_SEED_LIMIT` | `50` | Episodes before bumper rendering starts |
-| `CHANNEL_DOCKER_CONTAINER` | `tvchannel` | Docker container name for restarts |
-| `CHANNEL_RESTART_COMMAND` | `docker restart tvchannel` | Command to restart media server |
+Check if the playlist was generated:
+```bash
+docker exec tvchannel cat /app/hls/playlist.txt | head -20
+```
 
-### Configuration Files
+And verify HLS segments are being created:
+```bash
+docker exec tvchannel ls -la /app/hls/ | grep .ts
+```
 
-**`channel_settings.json`** - Main channel configuration
-- Channel list with media roots and playback modes
-- Show configurations with inclusion flags and weights
+### Playlist Not Updating
 
-**`sassy_messages.json`** - Sassy card configuration
-- Enable/disable feature
-- Probability and style settings
-- Custom messages array
+Make sure `server/config/channel_settings.json` is mounted as a volume. If you change the config, restart the container:
+```bash
+docker restart tvchannel
+```
 
-## 📡 API Reference
+### Bumpers Not Generating
 
-### Channel Management
+Check that the `assets/` directory is mounted. Bumpers need disk space for temporary files during generation. If something's wrong, check the container logs for FFmpeg errors.
 
-**List All Channels**
-```http
+### Admin UI Not Connecting
+
+Make sure the API is running:
+```bash
+curl http://localhost:8000/api/healthz
+```
+
+If you're accessing from a different origin, check CORS settings. Also verify that `VITE_API_BASE` matches your API URL.
+
+### Watch Progress Issues
+
+If watch progress isn't working, check that `watch_progress.json` exists and is writable. The file paths in there need to match your actual file locations. If things get messed up, just delete `watch_progress.json` and regenerate the playlist.
+
+### Performance Issues
+
+If playlist generation is slow, try reducing `PLAYLIST_EPISODE_LIMIT`. If you want bumpers to start appearing sooner, increase `PLAYLIST_SEED_LIMIT`. Also keep an eye on disk space in `/app/hls/`—HLS segments can accumulate over time.
+
+## API Reference
+
+The admin API is pretty straightforward. Here are the main endpoints:
+
+**List channels:**
+```
 GET /api/channels
 ```
 
-**Get Channel Details**
-```http
+**Get a specific channel:**
+```
 GET /api/channels/{channel_id}
 ```
 
-**Update Channel**
-```http
+**Update a channel:**
+```
 PUT /api/channels/{channel_id}
 Content-Type: application/json
 
 {
   "id": "default",
   "name": "My Channel",
-  "enabled": true,
-  "media_root": "/media/tvchannel",
-  "playback_mode": "sequential",
-  "loop_entire_library": true,
-  "shows": [...]
+  ...
 }
 ```
 
-**Discover Shows**
-```http
+**Discover shows in a folder:**
+```
 GET /api/channels/{channel_id}/shows/discover?media_root=/path/to/media
 ```
 
-### Playlist Management
-
-**Get Playlist Snapshot**
-```http
+**Get playlist snapshot:**
+```
 GET /api/channels/{channel_id}/playlist/next?limit=25
 ```
 
-Returns current episode and next N controllable items.
-
-**Update Playlist**
-```http
+**Update playlist order:**
+```
 POST /api/channels/{channel_id}/playlist/next
 Content-Type: application/json
 
 {
   "version": 1234567890.123,
-  "desired": ["/path/to/episode1.mp4", "/path/to/episode2.mp4"],
+  "desired": ["/path/to/episode1.mp4", ...],
   "skipped": ["/path/to/episode3.mp4"]
 }
 ```
 
-**Skip Current Episode**
-```http
+**Skip current episode:**
+```
 POST /api/channels/{channel_id}/playlist/skip-current
 ```
 
-### Health Check
-
-```http
+**Health check:**
+```
 GET /api/healthz
 ```
 
-Returns `{"status": "ok"}` if the API is running.
+The interactive docs at `/docs` are probably easier to use than reading this, but there you go.
 
-## 🔧 Troubleshooting
+## Future Ideas
 
-### Stream Not Playing
-
-1. **Check container logs:**
-   ```bash
-   docker logs tvchannel
-   ```
-
-2. **Verify media files exist:**
-   ```bash
-   docker exec tvchannel ls -la /media/tvchannel
-   ```
-
-3. **Check playlist generation:**
-   ```bash
-   docker exec tvchannel cat /app/hls/playlist.txt | head -20
-   ```
-
-4. **Verify HLS files are being created:**
-   ```bash
-   docker exec tvchannel ls -la /app/hls/ | grep .ts
-   ```
-
-### Playlist Not Updating
-
-- Ensure `server/config/channel_settings.json` is mounted as a volume
-- Check file permissions on the config directory
-- Restart the container after config changes:
-  ```bash
-  docker restart tvchannel
-  ```
-
-### Bumpers Not Generating
-
-- Verify `assets/` directory is mounted
-- Check disk space (bumpers require temporary storage)
-- Look for errors in container logs related to FFmpeg
-
-### Admin UI Not Connecting
-
-- Verify the API is running: `curl http://localhost:8000/api/healthz`
-- Check CORS settings if accessing from a different origin
-- Verify `VITE_API_BASE` environment variable matches your API URL
-
-### Watch Progress Issues
-
-- Check `watch_progress.json` exists and is writable
-- Verify file paths in progress file match actual file locations
-- Reset watch progress by deleting `watch_progress.json` and regenerating playlist
-
-### Performance Issues
-
-- Reduce `PLAYLIST_EPISODE_LIMIT` for faster playlist generation
-- Increase `PLAYLIST_SEED_LIMIT` to write episodes before bumper rendering
-- Monitor disk space in `/app/hls/` (HLS segments accumulate)
-- Consider limiting watch progress history
-
-## 🎯 Architecture Overview
-
-```
-┌─────────────────┐
-│  Media Library  │
-│  (/media/tv)    │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ generate_       │
-│ playlist.py     │─────► Playlist.txt
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│   stream.py     │─────► FFmpeg ───► HLS Segments
-│  (FFmpeg loop)  │                      │
-└────────┬────────┘                      │
-         │                               ▼
-         │                        ┌──────────────┐
-         │                        │   Nginx      │
-         │                        │  (HTTP)      │
-         └────────────────────────┼──────────────┘
-                                  │
-                                  ▼
-                        ┌─────────────────┐
-                        │  Clients        │
-                        │  (Kodi/Web/VLC) │
-                        └─────────────────┘
-
-         ┌─────────────────┐
-         │   FastAPI       │
-         │   Admin API     │
-         └────────┬────────┘
-                  │
-                  ▼
-         ┌─────────────────┐
-         │  React Admin UI │
-         └─────────────────┘
-```
-
-## 📝 Development Notes
-
-### Key Files
-
-- **`server/generate_playlist.py`** - Scans media, generates playlist with bumpers
-- **`server/stream.py`** - Main streaming loop, FFmpeg process management
-- **`server/playlist_service.py`** - Playlist utilities, watch progress, segment building
-- **`server/api/app.py`** - FastAPI REST endpoints for admin interface
-- **`ui/channel-admin/src/App.tsx`** - React admin panel main component
-
-### Adding New Features
-
-1. **New Bumper Types:** Add renderer in `scripts/bumpers/`
-2. **API Endpoints:** Add routes in `server/api/app.py`
-3. **UI Components:** Add React components in `ui/channel-admin/src/components/`
-
-### Testing
-
-- Local Mac testing: See [Local Mac Testing](#-local-mac-testing-no-raspberry-pi-required) section
-- Manual testing recommended (no automated tests currently)
-- Check container logs for debugging
-
-## 🧪 Local Mac Testing (no Raspberry Pi required)
-
-1. **Prepare media directory:**
-   ```bash
-   mkdir -p ~/tv_media
-   # Copy some .mp4 / .mkv files into ~/tv_media
-   ```
-
-2. **Build and run the server:**
-   ```bash
-   docker build -t tvchannel -f server/Dockerfile .
-   docker run -d \
-     -p 8080:8080 \
-     -v ~/tv_media:/media/tvchannel \
-     -v "$(pwd)/assets:/app/assets" \
-     -v "$(pwd)/server/config:/app/config" \
-     --name tvchannel tvchannel
-   ```
-
-3. **Start the web test client:**
-   ```bash
-   cd client/web_test
-   chmod +x serve_test_client.sh
-   ./serve_test_client.sh
-   ```
-
-4. **Open the browser player:**
-   - Visit `http://localhost:8081` in Chrome (hls.js) or Safari (native HLS)
-
-## 🚧 Future Ideas
-
-- Multiple channels / schedules
-- Live input integration
+Some things I've been thinking about adding:
+- Multiple channels with different schedules
+- Live input integration (stream from a camera or capture card)
 - Electronic Program Guide (EPG)
 - Commercial break insertion
-- User authentication for admin panel
-- Mobile app support
-- Chromecast integration
+- User authentication for the admin panel
+- Mobile app
+- Chromecast support
 
-## 📄 License
+If you have ideas or want to contribute, feel free to open an issue or PR!
+
+## License
 
 [Add your license information here]
 
@@ -651,4 +453,4 @@ Returns `{"status": "ok"}` if the API is running.
 
 **Enjoy your personal TV channel!** 🎉
 
-For issues, questions, or contributions, please check the `ISSUES.md` and `PROJECT_STATUS.md` files.
+If you run into issues or have questions, check out `ISSUES.md` and `PROJECT_STATUS.md`. Or just open an issue on GitHub.
