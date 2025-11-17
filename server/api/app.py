@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,7 +40,7 @@ except ImportError:
     _normalize_path = None
 
 # Cache for computed segments (invalidated when playlist changes)
-_segments_cache: List[Dict[str, Any]] | None = None
+_segments_cache: Optional[List[Dict[str, Any]]] = None
 _segments_playlist_mtime: float = 0.0
 
 app = FastAPI(title="Channel Admin API")
@@ -112,7 +112,7 @@ def update_channel(channel_id: str, updated: Dict[str, Any]) -> Dict[str, Any]:
 @app.get("/api/channels/{channel_id}/shows/discover")
 def discover_channel_shows(
     channel_id: str,
-    media_root: str | None = Query(
+    media_root: Optional[str] = Query(
         default=None, description="Override the channel's media root when scanning"
     ),
 ) -> List[Dict[str, Any]]:
@@ -552,7 +552,7 @@ def _require_channel(channel_id: str) -> Dict[str, Any]:
 
 
 def _resolve_current_segment_index(
-    segments: List[Dict[str, Any]], state: Dict[str, Any] | None
+    segments: List[Dict[str, Any]], state: Optional[Dict[str, Any]]
 ) -> int:
     if not state:
         return -1
@@ -562,7 +562,7 @@ def _resolve_current_segment_index(
     return find_segment_index_for_entry(segments, current_path)
 
 
-def _format_segment(segment: Dict[str, Any], media_root: str | None) -> Dict[str, Any]:
+def _format_segment(segment: Dict[str, Any], media_root: Optional[str]) -> Dict[str, Any]:
     return describe_episode(segment["episode_path"], media_root, segment["index"])
 
 

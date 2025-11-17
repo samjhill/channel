@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
+
 import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 
 try:
     from playlist_service import (
@@ -92,7 +94,7 @@ BUG_MARGIN = get_int_env("HBN_BUG_MARGIN", 40)
 BUG_POSITION = os.environ.get("HBN_BUG_POSITION", "top-right").lower()
 
 # Cache for video height probing (expensive operation)
-_video_height_cache: Dict[str, int | None] = {}
+_video_height_cache: Dict[str, Optional[int]] = {}
 
 
 def load_playlist():
@@ -119,7 +121,7 @@ def overlay_position_expr(position: str, margin: int) -> tuple[str, str]:
     return mapping.get(position, mapping["top-right"])
 
 
-def probe_video_height(src: str) -> int | None:
+def probe_video_height(src: str) -> Optional[int]:
     """Probe video height with caching to avoid repeated ffprobe calls."""
     global _video_height_cache
     
@@ -155,7 +157,7 @@ def probe_video_height(src: str) -> int | None:
     return height
 
 
-def build_overlay_args(video_height: int | None):
+def build_overlay_args(video_height: Optional[int]):
     if not os.path.isfile(BUG_IMAGE_PATH):
         return [], False
 
@@ -390,7 +392,7 @@ def record_playhead(src: str, index: int, playlist_mtime: float) -> None:
 
 
 def run_stream():
-    last_played: str | None = None
+    last_played: Optional[str] = None
     next_index = 0
 
     while True:
