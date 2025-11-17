@@ -4,9 +4,10 @@ import os
 import random
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 THIS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = THIS_DIR.parent
@@ -175,6 +176,22 @@ def find_existing_bumper(
     return None
 
 
+def _render_bumper_safe(
+    show_title: str, episode_metadata: Optional[Dict[str, Optional[int]]] = None
+) -> Tuple[str, Optional[str]]:
+    """
+    Safely render a bumper, returning (bumper_path, error_message).
+    Designed for parallel execution.
+    """
+    try:
+        bumper_path = ensure_bumper(show_title, episode_metadata)
+        return (bumper_path, None)
+    except Exception as exc:
+        error_msg = str(exc)
+        print(f"[Bumpers] Failed to render bumper for {show_title!r}: {error_msg}", flush=True)
+        return (None, error_msg)
+
+
 def ensure_bumper(
     show_title: str, episode_metadata: Optional[Dict[str, Optional[int]]] = None
 ) -> str:
@@ -195,7 +212,7 @@ def ensure_bumper(
     generic_filename = f"{base_name}.mp4"
     generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
     if not os.path.exists(generic_bumper_path):
-        print(f"[Bumpers] Rendering generic 'Up Next' bumper for {show_title!r}")
+        print(f"[Bumpers] Rendering generic 'Up Next' bumper for {show_title!r}", flush=True)
         render_up_next_bumper(
             show_title=show_title,
             output_path=generic_bumper_path,
@@ -211,7 +228,7 @@ def ensure_bumper(
         if not os.path.exists(specific_bumper_path):
             # Only create specific bumper if generic exists
             if os.path.exists(generic_bumper_path):
-                print(f"[Bumpers] Rendering specific 'Up Next' bumper for {show_title!r} - {episode_code}")
+                print(f"[Bumpers] Rendering specific 'Up Next' bumper for {show_title!r} - {episode_code}", flush=True)
                 render_up_next_bumper(
                     show_title=show_title,
                     output_path=specific_bumper_path,
@@ -220,7 +237,7 @@ def ensure_bumper(
                 )
             else:
                 # Generic doesn't exist yet (shouldn't happen, but fallback)
-                print(f"[Bumpers] Generic bumper not found, using generic for {show_title!r}")
+                print(f"[Bumpers] Generic bumper not found, using generic for {show_title!r}", flush=True)
                 return generic_bumper_path
         
         # Return specific bumper if it exists, otherwise generic
@@ -295,6 +312,15 @@ try:
     )
 except (TypeError, ValueError):
     PLAYLIST_SEED_LIMIT = DEFAULT_PLAYLIST_SEED_LIMIT
+
+# Maximum number of parallel bumper generation workers
+try:
+    BUMPER_GEN_MAX_WORKERS = max(
+        1,
+        int(os.environ.get("BUMPER_GEN_MAX_WORKERS", os.cpu_count() or 4)),
+    )
+except (TypeError, ValueError):
+    BUMPER_GEN_MAX_WORKERS = 4
 
 
 def parse_include_overrides() -> set[str]:
@@ -620,10 +646,114 @@ def schedule_weighted_random(
     return slots
 
 
+def collect_needed_bumpers(slots: Sequence[EpisodeSlot], seed_threshold: int) -> List[Tuple[str, Optional[Dict[str, Optional[int]]]]]:
+    """
+    Collect all bumpers that need to be generated.
+    Returns a list of (show_title, episode_metadata) tuples.
+    Prioritizes generic bumpers (no episode metadata) before specific ones.
+    """
+    needed: List[Tuple[str, Optional[Dict[str, Optional[int]]]]] = []
+    seen = set()  # Track unique bumper requests to avoid duplicates
+    generic_bumpers = {}  # Track which shows need generic bumpers
+    specific_bumpers: List[Tuple[str, Optional[Dict[str, Optional[int]]]]] = []
+    
+    for idx, slot in enumerate(slots):
+        # Only collect bumpers for post-seed episodes
+        if idx < seed_threshold:
+            continue
+            
+        metadata = extract_episode_metadata(slot.episode_path)
+        
+        # Check if bumper already exists
+        existing = find_existing_bumper(slot.show_label, metadata)
+        if existing:
+            continue
+        
+        episode_code = format_episode_code(metadata) if metadata else None
+        
+        # Separate generic and specific bumper requests
+        if episode_code:
+            key = (slot.show_label, episode_code)
+            if key not in seen:
+                seen.add(key)
+                # Track that we need the generic bumper first
+                if slot.show_label not in generic_bumpers:
+                    generic_bumpers[slot.show_label] = None
+                specific_bumpers.append((slot.show_label, metadata))
+        else:
+            key = (slot.show_label, None)
+            if key not in seen:
+                seen.add(key)
+                generic_bumpers[slot.show_label] = None
+    
+    # First add all generic bumpers, then specific ones
+    needed.extend([(show, None) for show in generic_bumpers.keys()])
+    needed.extend(specific_bumpers)
+    
+    return needed
+
+
+def generate_bumpers_parallel(
+    needed_bumpers: List[Tuple[str, Optional[Dict[str, Optional[int]]]]]
+) -> Dict[Tuple[str, Optional[str]], str]:
+    """
+    Generate bumpers in parallel using ThreadPoolExecutor.
+    Returns a dict mapping (show_title, episode_code) to bumper_path.
+    """
+    if not needed_bumpers:
+        return {}
+    
+    bumper_results: Dict[Tuple[str, Optional[str]], str] = {}
+    completed_count = 0
+    total_count = len(needed_bumpers)
+    
+    print(f"[Bumpers] Generating {total_count} bumpers in parallel (max {BUMPER_GEN_MAX_WORKERS} workers)...", flush=True)
+    
+    with ThreadPoolExecutor(max_workers=BUMPER_GEN_MAX_WORKERS) as executor:
+        # Submit all bumper generation tasks
+        future_to_bumper = {}
+        for show_title, episode_metadata in needed_bumpers:
+            episode_code = format_episode_code(episode_metadata) if episode_metadata else None
+            future = executor.submit(_render_bumper_safe, show_title, episode_metadata)
+            future_to_bumper[future] = (show_title, episode_code)
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_bumper):
+            show_title, episode_code = future_to_bumper[future]
+            completed_count += 1
+            
+            try:
+                bumper_path, error = future.result()
+                if bumper_path:
+                    bumper_results[(show_title, episode_code)] = bumper_path
+                    if completed_count % 5 == 0 or completed_count == total_count:
+                        percent = int(100 * completed_count / total_count)
+                        print(
+                            f"[Bumpers] Progress: {completed_count}/{total_count} ({percent}%)",
+                            flush=True
+                        )
+                elif error:
+                    # Bumper generation failed, will fallback to generic or skip
+                    print(
+                        f"[Bumpers] Failed to generate bumper for {show_title!r} "
+                        f"{f'(episode {episode_code})' if episode_code else ''}: {error}",
+                        flush=True
+                    )
+            except Exception as exc:
+                print(
+                    f"[Bumpers] Unexpected error generating bumper for {show_title!r}: {exc}",
+                    flush=True
+                )
+    
+    print(f"[Bumpers] Completed generation: {len(bumper_results)}/{total_count} successful", flush=True)
+    return bumper_results
+
+
 def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
     """
     Write the playlist file, starting from the next episode after the last watched one.
     If no watch progress exists, starts from the beginning.
+    Uses parallel bumper generation for improved performance.
     """
     seed_threshold = min(PLAYLIST_SEED_LIMIT, len(slots))
     seed_announced = False
@@ -647,11 +777,42 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
     # Rotate slots to start from the resume point
     rotated_slots = list(slots[start_index:]) + list(slots[:start_index])
 
+    # Pre-generate all needed bumpers in parallel
+    needed_bumpers = collect_needed_bumpers(rotated_slots, seed_threshold)
+    pre_generated_bumpers = generate_bumpers_parallel(needed_bumpers) if needed_bumpers else {}
+
     os.makedirs(os.path.dirname(PLAYLIST_FILE), exist_ok=True)
     with open(PLAYLIST_FILE, "w", encoding="utf-8") as handle:
         for idx, slot in enumerate(rotated_slots):
             require_bumper = idx >= seed_threshold
-            write_episode_entry(handle, slot, require_bumper)
+            
+            # For post-seed episodes, check pre-generated bumpers first
+            if require_bumper:
+                metadata = extract_episode_metadata(slot.episode_path)
+                episode_code = format_episode_code(metadata) if metadata else None
+                bumper_key = (slot.show_label, episode_code)
+                
+                # Check pre-generated bumpers first
+                if bumper_key in pre_generated_bumpers:
+                    bumper_path = pre_generated_bumpers[bumper_key]
+                else:
+                    # Fallback: check existing or try to generate (should be rare)
+                    bumper_path = find_existing_bumper(slot.show_label, metadata)
+                    if not bumper_path:
+                        try:
+                            bumper_path = ensure_bumper(slot.show_label, metadata)
+                        except Exception as exc:
+                            print(f"[Bumpers] Fallback generation failed for {slot.show_label}: {exc}", flush=True)
+                            bumper_path = None
+            else:
+                # For seed episodes, just check if bumper exists (don't wait for generation)
+                metadata = extract_episode_metadata(slot.episode_path)
+                bumper_path = find_existing_bumper(slot.show_label, metadata)
+
+            if bumper_path:
+                handle.write(bumper_path + "\n")
+            handle.write(slot.episode_path + "\n")
+            handle.flush()
 
             if (
                 seed_threshold
@@ -663,7 +824,8 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                     f"[Playlist] Seeded first {seed_threshold} episodes without waiting for bumpers.",
                     flush=True,
                 )
-                print("[Playlist] Continuing to append bumpers in the background...", flush=True)
+                if needed_bumpers:
+                    print("[Playlist] Parallel bumper generation completed before writing remaining episodes.", flush=True)
                 seed_announced = True
 
             if idx < len(rotated_slots) - 1:
@@ -710,10 +872,31 @@ def maybe_write_sassy_card(handle) -> None:
         handle.flush()
 
 
+def normalize_media_root_for_container(media_root: str) -> str:
+    """
+    Normalize media_root path when running inside Docker container.
+    Converts host paths like /Volumes/media/tv to container paths like /media/tvchannel.
+    """
+    # Check if we're running inside Docker (container has /app directory)
+    if os.path.exists("/app"):
+        # Common host-to-container path mappings
+        # /Volumes/media/tv -> /media/tvchannel
+        if media_root.startswith("/Volumes/media/tv"):
+            return media_root.replace("/Volumes/media/tv", "/media/tvchannel", 1)
+        # Handle other common macOS/Windows volume mount patterns
+        if media_root.startswith("/Volumes/"):
+            # Generic fallback: try /media/tvchannel if it exists
+            if os.path.exists("/media/tvchannel"):
+                return "/media/tvchannel"
+    return media_root
+
+
 def main():
     settings = load_settings()
     channel = resolve_channel(settings)
     media_root = channel.get("media_root") or "/media/tvchannel"
+    # Normalize path for container if needed
+    media_root = normalize_media_root_for_container(media_root)
 
     # Reset sassy card deck for fresh shuffle
     SASSY_CARDS.reset_deck()

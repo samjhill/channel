@@ -180,7 +180,7 @@
           "id": "invader-zim",
           "label": "Invader ZIM",
           "path": "Invader ZIM",
-          "include": false,
+          "include": true,
           "playback_mode": "inherit",
           "weight": 1.0
         },
