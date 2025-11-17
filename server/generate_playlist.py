@@ -270,6 +270,25 @@ def resolve_assets_root() -> str:
     return DEFAULT_ASSETS_ROOT
 
 
+def _normalize_path_for_container(path: str) -> str:
+    """
+    Normalize path when running inside Docker container.
+    Converts host paths like /Volumes/media/tv to container paths like /media/tvchannel.
+    """
+    # Check if we're running inside Docker (container has /app directory)
+    if os.path.exists("/app"):
+        # Common host-to-container path mappings
+        # /Volumes/media/tv -> /media/tvchannel
+        if path.startswith("/Volumes/media/tv"):
+            return path.replace("/Volumes/media/tv", "/media/tvchannel", 1)
+        # Handle other common macOS/Windows volume mount patterns
+        if path.startswith("/Volumes/"):
+            # Generic fallback: try /media/tvchannel if it exists
+            if os.path.exists("/media/tvchannel"):
+                return "/media/tvchannel"
+    return path
+
+
 def resolve_bumpers_root(assets_root: str) -> str:
     """
     Resolve the root directory for generated bumper videos.
@@ -284,10 +303,21 @@ def resolve_bumpers_root(assets_root: str) -> str:
 
     This keeps large rendered videos out of the Docker image and lets them
     be shared across rebuilds.
+    
+    If running inside Docker and HBN_BUMPERS_ROOT is not set, defaults to
+    /media/tvchannel/bumpers to match the media volume mount.
     """
     override = os.environ.get("HBN_BUMPERS_ROOT")
     if override:
-        return override
+        # Normalize path for container if needed (like media_root)
+        return _normalize_path_for_container(override)
+
+    # If running inside Docker, default to media volume bumpers directory
+    if os.path.exists("/app"):
+        # Check if /media/tvchannel/bumpers exists or can be created
+        media_bumpers = "/media/tvchannel/bumpers"
+        if os.path.exists("/media/tvchannel") or os.path.exists(media_bumpers):
+            return media_bumpers
 
     return os.path.join(assets_root, "bumpers")
 
@@ -872,31 +902,12 @@ def maybe_write_sassy_card(handle) -> None:
         handle.flush()
 
 
-def normalize_media_root_for_container(media_root: str) -> str:
-    """
-    Normalize media_root path when running inside Docker container.
-    Converts host paths like /Volumes/media/tv to container paths like /media/tvchannel.
-    """
-    # Check if we're running inside Docker (container has /app directory)
-    if os.path.exists("/app"):
-        # Common host-to-container path mappings
-        # /Volumes/media/tv -> /media/tvchannel
-        if media_root.startswith("/Volumes/media/tv"):
-            return media_root.replace("/Volumes/media/tv", "/media/tvchannel", 1)
-        # Handle other common macOS/Windows volume mount patterns
-        if media_root.startswith("/Volumes/"):
-            # Generic fallback: try /media/tvchannel if it exists
-            if os.path.exists("/media/tvchannel"):
-                return "/media/tvchannel"
-    return media_root
-
-
 def main():
     settings = load_settings()
     channel = resolve_channel(settings)
     media_root = channel.get("media_root") or "/media/tvchannel"
     # Normalize path for container if needed
-    media_root = normalize_media_root_for_container(media_root)
+    media_root = _normalize_path_for_container(media_root)
 
     # Reset sassy card deck for fresh shuffle
     SASSY_CARDS.reset_deck()
