@@ -65,18 +65,28 @@ async function handleResponse<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// Create a fetch wrapper with timeout
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = 10000): Promise<Response> {
+  return Promise.race([
+    fetch(url, options),
+    new Promise<Response>((_, reject) =>
+      setTimeout(() => reject(new Error(`Request timeout: ${url}`)), timeout)
+    )
+  ]);
+}
+
 export async function fetchChannels(): Promise<ChannelConfig[]> {
-  const res = await fetch(`${API_BASE}/api/channels`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/channels`);
   return handleResponse<ChannelConfig[]>(res);
 }
 
 export async function fetchChannel(id: string): Promise<ChannelConfig> {
-  const res = await fetch(`${API_BASE}/api/channels/${encodeURIComponent(id)}`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/channels/${encodeURIComponent(id)}`);
   return handleResponse<ChannelConfig>(res);
 }
 
 export async function saveChannel(cfg: ChannelConfig): Promise<void> {
-  const res = await fetch(`${API_BASE}/api/channels/${encodeURIComponent(cfg.id)}`, {
+  const res = await fetchWithTimeout(`${API_BASE}/api/channels/${encodeURIComponent(cfg.id)}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(cfg)
@@ -89,7 +99,7 @@ export async function discoverShows(
   mediaRoot?: string
 ): Promise<ShowConfig[]> {
   const params = mediaRoot ? `?media_root=${encodeURIComponent(mediaRoot)}` : "";
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${API_BASE}/api/channels/${encodeURIComponent(id)}/shows/discover${params}`
   );
   return handleResponse<ShowConfig[]>(res);
@@ -99,7 +109,7 @@ export async function fetchPlaylistSnapshot(
   channelId: string,
   limit = 25
 ): Promise<PlaylistSnapshot> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/playlist/next?limit=${limit}`
   );
   return handleResponse<PlaylistSnapshot>(res);
@@ -110,7 +120,7 @@ export async function updateUpcomingPlaylist(
   payload: PlaylistUpdatePayload,
   limit = 25
 ): Promise<PlaylistSnapshot> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/playlist/next?limit=${limit}`,
     {
       method: "POST",
@@ -122,7 +132,7 @@ export async function updateUpcomingPlaylist(
 }
 
 export async function skipCurrentEpisode(channelId: string): Promise<PlaylistSnapshot> {
-  const res = await fetch(
+  const res = await fetchWithTimeout(
     `${API_BASE}/api/channels/${encodeURIComponent(channelId)}/playlist/skip-current`,
     {
       method: "POST"
@@ -141,18 +151,56 @@ export interface SassyConfig {
 }
 
 export async function fetchSassyConfig(): Promise<SassyConfig> {
-  const res = await fetch(`${API_BASE}/api/bumpers/sassy`);
+  const res = await fetchWithTimeout(`${API_BASE}/api/bumpers/sassy`);
   return handleResponse<SassyConfig>(res);
 }
 
 export async function updateSassyConfig(
   config: Partial<SassyConfig>
 ): Promise<SassyConfig> {
-  const res = await fetch(`${API_BASE}/api/bumpers/sassy`, {
+  const res = await fetchWithTimeout(`${API_BASE}/api/bumpers/sassy`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(config)
   });
   return handleResponse<SassyConfig>(res);
+}
+
+export interface WeatherLocation {
+  city: string;
+  region: string;
+  country: string;
+  lat: number;
+  lon: number;
+}
+
+export interface WeatherConfig {
+  enabled: boolean;
+  provider: string;
+  api_key_env_var: string;
+  location: WeatherLocation;
+  units: "imperial" | "metric";
+  duration_seconds: number;
+  cache_ttl_minutes: number;
+  probability_between_episodes: number;
+  music_volume?: number;
+  api_key?: string | null;  // Will be null if set via env var, or masked if in config
+  api_key_set?: boolean;  // Indicates if API key is configured (via env var)
+}
+
+export async function fetchWeatherConfig(): Promise<WeatherConfig> {
+  const res = await fetchWithTimeout(`${API_BASE}/api/bumpers/weather`);
+  return handleResponse<WeatherConfig>(res);
+}
+
+export async function updateWeatherConfig(
+  config: Partial<WeatherConfig>
+): Promise<WeatherConfig> {
+  const res = await fetchWithTimeout(`${API_BASE}/api/bumpers/weather`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config)
+  });
+  return handleResponse<WeatherConfig>(res);
 }
 
