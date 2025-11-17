@@ -33,6 +33,7 @@ from server.playlist_service import (
     resolve_playlist_path,
 )
 from server.services.weather_service import load_weather_config
+from server.bumper_block import BUMPER_BLOCK_MARKER, get_generator
 
 PLAYLIST_FILE = str(resolve_playlist_path())
 DEFAULT_ASSETS_ROOT = "/app/assets"
@@ -564,7 +565,7 @@ def maybe_write_weather_bumper(handle) -> None:
     """
     try:
         cfg = load_weather_config()
-        if not cfg.get("enabled", True):
+        if not cfg.get("enabled", False):
             return
         
         probability = cfg.get("probability_between_episodes", 0.0)
@@ -884,7 +885,7 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
         # Add weather bumper at the very beginning for testing (if enabled)
         try:
             cfg = load_weather_config()
-            if cfg.get("enabled", True):
+            if cfg.get("enabled", False):
                 handle.write(WEATHER_BUMPER_MARKER + "\n")
         except Exception:
             # If config load fails, skip the weather bumper
@@ -942,9 +943,31 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                 seed_announced = True
 
             if idx < len(rotated_slots) - 1:
-                maybe_write_weather_bumper(handle)
-                maybe_write_network_bumper(handle)
-                maybe_write_sassy_card(handle)
+                # Collect bumpers for this block
+                up_next = bumper_path if bumper_path else None
+                sassy = SASSY_CARDS.draw_card()
+                network = NETWORK_BUMPERS.draw_bumper()
+                weather = None
+                try:
+                    weather_cfg = load_weather_config()
+                    if weather_cfg.get("enabled", False):
+                        weather_prob = weather_cfg.get("probability_between_episodes", 0.0)
+                        if weather_prob > 0 and random.random() <= weather_prob:
+                            weather = WEATHER_BUMPER_MARKER  # Will be rendered JIT
+                except Exception:
+                    pass
+                
+                # Queue for pre-generation
+                block_generator = get_generator()
+                block_generator.queue_pregen({
+                    "up_next_bumper": up_next,
+                    "sassy_card": sassy,
+                    "network_bumper": network,
+                    "weather_bumper": weather,
+                })
+                
+                # Write bumper block marker - the streamer will generate the block
+                handle.write(BUMPER_BLOCK_MARKER + "\n")
 
 
 def write_episode_entry(handle, slot: EpisodeSlot, require_bumper: bool) -> None:
@@ -995,6 +1018,10 @@ def main():
 
     # Reset sassy card deck for fresh shuffle
     SASSY_CARDS.reset_deck()
+    
+    # Start bumper block pre-generation thread
+    block_generator = get_generator()
+    block_generator.start_pregen_thread()
 
     shows = filter_shows(channel)
     if not shows:

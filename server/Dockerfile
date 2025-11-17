@@ -16,7 +16,9 @@ COPY server/generate_playlist.py server/stream.py server/entrypoint.sh server/pr
 COPY server/playlist_service.py /app/playlist_service.py
 COPY server/__init__.py /app/server/__init__.py
 COPY server/playlist_service.py /app/server/playlist_service.py
+COPY server/bumper_block.py /app/server/bumper_block.py
 COPY server/api /app/server/api
+COPY server/services /app/server/services
 COPY server/nginx.conf /etc/nginx/nginx.conf
 # Copy config files (channel_settings.json, sassy_messages.json)
 # Note: If a volume is mounted at /app/config, it will override these files

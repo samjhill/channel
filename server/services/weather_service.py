@@ -15,7 +15,18 @@ try:
 except ImportError:
     requests = None
 
-CONFIG_PATH = Path(__file__).parent.parent / "config" / "weather_bumpers.json"
+# Try multiple possible config paths
+_config_paths = [
+    Path("/app/config/weather_bumpers.json"),  # Docker volume mount
+    Path(__file__).parent.parent / "config" / "weather_bumpers.json",  # Relative to this file
+]
+CONFIG_PATH = None
+for path in _config_paths:
+    if path.exists():
+        CONFIG_PATH = path
+        break
+if CONFIG_PATH is None:
+    CONFIG_PATH = _config_paths[0]  # Default to first path
 
 
 @dataclass
