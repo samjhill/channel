@@ -162,18 +162,16 @@ def find_existing_bumper(
     Validates that the bumper is a valid video file before returning it.
     Returns the path to the bumper if found and valid, None otherwise.
     Does not create new bumpers.
+    
+    NOTE: Specific-episode bumpers are now generated dynamically (JIT).
+    This function only returns generic bumpers (show.mp4), not specific ones (show_S01E02.mp4).
     """
     base_name = safe_filename(show_title)
-    episode_code = format_episode_code(episode_metadata)
-
-    # Check for specific bumper first
-    if episode_code:
-        specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
-        specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
-        if os.path.exists(specific_bumper_path) and _validate_bumper_file(specific_bumper_path):
-            return specific_bumper_path
-
-    # Fall back to generic bumper
+    
+    # Skip specific-episode bumpers - they are generated dynamically
+    # Only return generic bumpers that exist as files
+    
+    # Check for generic bumper
     generic_filename = f"{base_name}.mp4"
     generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
     if os.path.exists(generic_bumper_path) and _validate_bumper_file(generic_bumper_path):
@@ -252,9 +250,12 @@ def ensure_bumper(
     show_title: str, episode_metadata: Optional[Dict[str, Optional[int]]] = None
 ) -> str:
     """
-    Ensure a bumper exists for the given show/episode.
-    Returns the path to an existing bumper, or creates and returns a new one.
+    Ensure a generic bumper exists for the given show.
+    Returns the path to an existing generic bumper, or creates and returns a new one.
     Uses fast renderer with pre-generated backgrounds for efficiency.
+    
+    NOTE: Specific-episode bumpers are now generated dynamically (JIT) and are not
+    saved as files. This function only creates/returns generic bumpers (show.mp4).
     """
     os.makedirs(BUMPERS_DIR, exist_ok=True)
 
@@ -297,45 +298,8 @@ def ensure_bumper(
             LOGGER.debug("No up-next backgrounds available, skipping fast render")
             raise ImportError("Backgrounds not available")
         
-        # If episode metadata is provided, try to create/use specific bumper
-        episode_code = format_episode_code(episode_metadata)
-        if episode_code:
-            specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
-            specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
-            if not os.path.exists(specific_bumper_path):
-                # Only create specific bumper if generic exists
-                if os.path.exists(generic_bumper_path) and bg_available:
-                    LOGGER.info(
-                        "Rendering specific 'Up Next' bumper for %r - %s (fast)",
-                        show_title,
-                        episode_code,
-                    )
-                    # Use a different background for variety
-                    background_id = (background_id + 1) % 5
-                    success = render_up_next_bumper_fast(
-                        show_title=show_title,
-                        output_path=specific_bumper_path,
-                        episode_label=format_episode_label(episode_metadata),
-                        background_id=background_id,
-                    )
-                    if not success:
-                        raise RuntimeError("Fast render failed")
-                elif not bg_available:
-                    # Backgrounds not available, skip specific bumper generation
-                    LOGGER.debug("No backgrounds available, skipping specific bumper")
-                    return generic_bumper_path
-                else:
-                    # Generic doesn't exist yet (shouldn't happen, but fallback)
-                    LOGGER.warning(
-                        "Generic bumper not found, using generic for %r", show_title
-                    )
-                    return generic_bumper_path
-
-            # Return specific bumper if it exists, otherwise generic
-            if os.path.exists(specific_bumper_path):
-                return specific_bumper_path
-        
-        # Return generic bumper (either no episode metadata, or specific doesn't exist)
+        # Specific-episode bumpers are now generated dynamically (JIT), not saved as files
+        # Return generic bumper (specific-episode bumpers will be rendered on-demand)
         return generic_bumper_path
     
     except Exception as e:
@@ -355,37 +319,8 @@ def ensure_bumper(
                 episode_label=None,  # Generic bumper has no episode label
             )
 
-        # If episode metadata is provided, try to create/use specific bumper
-        episode_code = format_episode_code(episode_metadata)
-        if episode_code:
-            specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
-            specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
-            if not os.path.exists(specific_bumper_path):
-                # Only create specific bumper if generic exists
-                if os.path.exists(generic_bumper_path):
-                    LOGGER.info(
-                        "Rendering specific 'Up Next' bumper for %r - %s",
-                        show_title,
-                        episode_code,
-                    )
-                    render_up_next_bumper(
-                        show_title=show_title,
-                        output_path=specific_bumper_path,
-                        logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
-                        episode_label=format_episode_label(episode_metadata),
-                    )
-                else:
-                    # Generic doesn't exist yet (shouldn't happen, but fallback)
-                    LOGGER.warning(
-                        "Generic bumper not found, using generic for %r", show_title
-                    )
-                    return generic_bumper_path
-
-            # Return specific bumper if it exists, otherwise generic
-            if os.path.exists(specific_bumper_path):
-                return specific_bumper_path
-
-        # Return generic bumper (either no episode metadata, or specific doesn't exist)
+        # Specific-episode bumpers are now generated dynamically (JIT), not saved as files
+        # Return generic bumper (specific-episode bumpers will be rendered on-demand)
         return generic_bumper_path
 
 
@@ -859,7 +794,7 @@ def collect_needed_bumpers(
     needed: List[Tuple[str, Optional[Dict[str, Optional[int]]]]] = []
     seen = set()  # Track unique bumper requests to avoid duplicates
     generic_bumpers = {}  # Track which shows need generic bumpers
-    specific_bumpers: List[Tuple[str, Optional[Dict[str, Optional[int]]]]] = []
+    # NOTE: Specific-episode bumpers are now generated dynamically (JIT), not pre-generated
 
     # Count bumper blocks to limit generation
     bumper_block_count = 0
@@ -883,33 +818,21 @@ def collect_needed_bumpers(
             bumper_block_count += 1
             continue
 
-        episode_code = format_episode_code(metadata) if metadata else None
-
-        # Separate generic and specific bumper requests
-        if episode_code:
-            key = (slot.show_label, episode_code)
-            if key not in seen:
-                seen.add(key)
-                # Track that we need the generic bumper first
-                if slot.show_label not in generic_bumpers:
-                    generic_bumpers[slot.show_label] = None
-                specific_bumpers.append((slot.show_label, metadata))
-        else:
-            key = (slot.show_label, None)
-            if key not in seen:
-                seen.add(key)
-                generic_bumpers[slot.show_label] = None
+        # Only collect generic bumpers (specific-episode bumpers are generated JIT)
+        key = (slot.show_label, None)
+        if key not in seen:
+            seen.add(key)
+            generic_bumpers[slot.show_label] = None
         
         # Count bumper blocks (each episode after seed threshold represents a potential block)
         bumper_block_count += 1
         
         # Stop if we've collected enough
-        if len(needed) + len(generic_bumpers) + len(specific_bumpers) >= max_bumpers_to_collect:
+        if len(needed) + len(generic_bumpers) >= max_bumpers_to_collect:
             break
 
-    # First add all generic bumpers, then specific ones
+    # Add all generic bumpers (specific-episode bumpers are generated dynamically, not pre-generated)
     needed.extend([(show, None) for show in generic_bumpers.keys()])
-    needed.extend(specific_bumpers)
 
     return needed
 
@@ -1118,13 +1041,14 @@ def write_episode_entry(handle, slot: EpisodeSlot, require_bumper: bool) -> None
     bumper_path: Optional[str] = None
     metadata = extract_episode_metadata(slot.episode_path)
 
-    # Always check for existing bumpers
+    # Always check for existing generic bumpers
+    # NOTE: Specific-episode bumpers are generated dynamically (JIT), not saved as files
     try:
-        bumper_path = find_existing_bumper(slot.show_label, metadata)
+        bumper_path = find_existing_bumper(slot.show_label, None)  # Only check for generic
 
-        # If no existing bumper found and require_bumper=True, try to create one
+        # If no existing generic bumper found and require_bumper=True, try to create one
         if not bumper_path and require_bumper:
-            bumper_path = ensure_bumper(slot.show_label, metadata)
+            bumper_path = ensure_bumper(slot.show_label, None)  # Only generate generic
     except Exception as exc:  # pragma: no cover - best effort
         if require_bumper:
             print(f"[Bumpers] Failed to render bumper for {slot.show_label}: {exc}")

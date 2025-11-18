@@ -273,24 +273,87 @@ def _render_weather_bumper_jit() -> Optional[str]:
     return None
 
 
+def _render_up_next_bumper_jit(
+    show_title: str, episode_metadata: Optional[Dict[str, Optional[int]]] = None
+) -> Optional[str]:
+    """Render a specific-episode up-next bumper just-in-time for playback.
+    
+    Only generates specific-episode bumpers (with episode metadata).
+    Generic bumpers should already exist as files.
+    """
+    if not episode_metadata:
+        # No episode metadata means this should be a generic bumper (already exists)
+        return None
+    
+    try:
+        from scripts.bumpers.render_up_next_fast import render_up_next_bumper_fast, get_up_next_background_path
+        from server.generate_playlist import format_episode_label
+    except ImportError:
+        import sys
+        repo_root = Path(__file__).resolve().parent.parent
+        if str(repo_root) not in sys.path:
+            sys.path.insert(0, str(repo_root))
+        from scripts.bumpers.render_up_next_fast import render_up_next_bumper_fast, get_up_next_background_path
+        from server.generate_playlist import format_episode_label
+    
+    # Check if backgrounds are available
+    bg_path = get_up_next_background_path()
+    if not bg_path:
+        LOGGER.warning("No up-next backgrounds available for JIT rendering")
+        return None
+    
+    # Create temporary directory for JIT bumpers
+    temp_dir = HLS_DIR / "up_next_temp"
+    temp_dir.mkdir(exist_ok=True)
+    
+    # Generate unique filename
+    episode_code = format_episode_label(episode_metadata) or "unknown"
+    safe_episode = "".join(c if c.isalnum() or c in "._-" else "_" for c in episode_code)
+    out_path = temp_dir / f"upnext_{int(time.time())}_{safe_episode}.mp4"
+    
+    # Use a random background for variety
+    import random
+    background_id = random.randint(0, 4)
+    
+    LOGGER.info("Rendering specific-episode up-next bumper JIT: %s - %s", show_title, episode_code)
+    success = render_up_next_bumper_fast(
+        show_title=show_title,
+        output_path=str(out_path),
+        episode_label=format_episode_label(episode_metadata),
+        background_id=background_id,
+    )
+    
+    if success and out_path.exists():
+        return str(out_path)
+    
+    LOGGER.warning("Failed to render up-next bumper JIT for %s - %s", show_title, episode_code)
+    return None
+
+
 def cleanup_bumpers(bumper_paths: list[str]) -> None:
     """
     Clean up (delete) bumper files after they've been used.
-    Only deletes generated up-next bumpers, not sassy cards or network bumpers.
+    Deletes:
+    - JIT-generated up-next bumpers (from up_next_temp directory)
+    - JIT-generated weather bumpers (from weather_temp directory)
+    Does NOT delete:
+    - Generic up-next bumpers (show.mp4) - these are reused
+    - Sassy cards
+    - Network bumpers
     """
     for bumper_path in bumper_paths:
         if not bumper_path:
             continue
         
-        # Only delete up-next bumpers (generated ones)
-        if "/bumpers/up_next/" not in bumper_path:
-            continue
-        
         try:
             bumper_file = Path(bumper_path)
-            if bumper_file.exists() and bumper_file.is_file():
+            if not bumper_file.exists() or not bumper_file.is_file():
+                continue
+            
+            # Delete JIT-generated bumpers (temporary directories)
+            if "/up_next_temp/" in bumper_path or "/weather_temp/" in bumper_path:
                 bumper_file.unlink()
-                LOGGER.info("Cleaned up bumper: %s", bumper_file.name)
+                LOGGER.info("Cleaned up JIT bumper: %s", bumper_file.name)
         except Exception as e:
             LOGGER.warning("Failed to cleanup bumper %s: %s", bumper_path, e)
 
@@ -342,16 +405,24 @@ def resolve_bumper_block(next_episode_index: int, files: List[str]) -> Optional[
         # Get up-next bumper
         show_label = infer_show_title_from_path(next_episode)
         metadata = extract_episode_metadata(next_episode)
+        
+        # Try to get generic bumper first (saved as file)
         up_next_bumper = find_existing_bumper(show_label, metadata)
         
         if not up_next_bumper:
-            # Try to generate it
+            # Try to generate generic bumper if it doesn't exist
             try:
                 from server.generate_playlist import ensure_bumper
-                up_next_bumper = ensure_bumper(show_label, metadata)
+                up_next_bumper = ensure_bumper(show_label, None)  # Only generate generic, no episode metadata
             except Exception:
-                LOGGER.warning("Could not get up-next bumper for %s", show_label)
+                LOGGER.warning("Could not get generic up-next bumper for %s", show_label)
                 return None
+        
+        # If we have episode metadata, render specific-episode bumper JIT
+        if metadata:
+            jit_bumper = _render_up_next_bumper_jit(show_label, metadata)
+            if jit_bumper:
+                up_next_bumper = jit_bumper  # Use JIT bumper instead of generic
         
         # Get weather bumper if enabled
         weather_bumper = None

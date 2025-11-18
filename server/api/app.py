@@ -1144,10 +1144,19 @@ def _find_next_bumper_block(entries: List[str], start_index: int) -> Dict[str, A
                 next_episode = entries[next_episode_idx]
                 show_label = infer_show_title_from_path(next_episode)
                 metadata = extract_episode_metadata(next_episode)
+                
+                # Get generic bumper first
                 up_next_bumper = find_existing_bumper(show_label, metadata)
                 
                 if not up_next_bumper:
-                    up_next_bumper = ensure_bumper(show_label, metadata)
+                    up_next_bumper = ensure_bumper(show_label, None)  # Only generate generic
+                
+                # If we have episode metadata, render specific-episode bumper JIT
+                if metadata:
+                    from server.stream import _render_up_next_bumper_jit
+                    jit_bumper = _render_up_next_bumper_jit(show_label, metadata)
+                    if jit_bumper:
+                        up_next_bumper = jit_bumper  # Use JIT bumper instead of generic
                 
                 gen = get_generator()
                 block = gen.generate_block(
