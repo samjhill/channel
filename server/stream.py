@@ -617,16 +617,70 @@ def run_stream() -> None:
             LOGGER.info("Filtered to %d valid entries", len(files))
 
             # Get current position from playhead
-            # If playhead points to a marker, find the actual episode
+            # First, check what FFmpeg is actually streaming (if anything)
+            # This is the source of truth for what's currently playing
+            ffmpeg_streaming_file = None
+            try:
+                result = subprocess.run(
+                    ["ps", "aux"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                )
+                for line in result.stdout.split("\n"):
+                    if "ffmpeg" in line.lower() and "stream.m3u8" in line and "-i" in line:
+                        # Extract the input file from FFmpeg command
+                        parts = line.split()
+                        try:
+                            i_idx = parts.index("-i")
+                            if i_idx + 1 < len(parts):
+                                potential_file = parts[i_idx + 1]
+                                # Check if it's a valid file path (not a filter or option)
+                                if os.path.exists(potential_file) and os.path.isfile(potential_file):
+                                    ffmpeg_streaming_file = potential_file
+                                    LOGGER.info("FFmpeg is currently streaming: %s", Path(potential_file).name)
+                                    break
+                        except (ValueError, IndexError):
+                            continue
+            except Exception as e:
+                LOGGER.debug("Could not check FFmpeg process: %s", e)
+            
+            # Load playhead state
             LOGGER.info("Loading playhead state...")
             playhead_state = load_playhead_state(force_reload=True)
             LOGGER.info("Playhead state: %s", playhead_state)
+            
+            # Determine current_index based on FFmpeg state and playhead
+            current_index = 0  # Default fallback
+            
             if playhead_state and playhead_state.get("current_index") is not None:
                 playhead_index = playhead_state.get("current_index", -1)
                 playhead_path = playhead_state.get("current_path")
                 
-                if 0 <= playhead_index < len(files):
+                # Priority 1: If FFmpeg is streaming a file, find that file's index
+                if ffmpeg_streaming_file:
+                    found_ffmpeg_index = None
+                    for idx, f in enumerate(files):
+                        if f == ffmpeg_streaming_file:
+                            found_ffmpeg_index = idx
+                            break
+                    
+                    if found_ffmpeg_index is not None:
+                        current_index = found_ffmpeg_index
+                        LOGGER.info("Using FFmpeg streaming file index: %d", current_index)
+                        # Update playhead to match what's actually streaming
+                        if playhead_index != found_ffmpeg_index or playhead_path != ffmpeg_streaming_file:
+                            LOGGER.info("Updating playhead to match FFmpeg state (index %d)", found_ffmpeg_index)
+                            update_playhead(ffmpeg_streaming_file, found_ffmpeg_index, playlist_mtime)
+                    else:
+                        # FFmpeg is streaming a file not in playlist - advance past playhead
+                        LOGGER.warning("FFmpeg streaming file not in playlist, advancing past playhead")
+                        current_index = playhead_index + 1 if playhead_index + 1 < len(files) else 0
+                
+                # Priority 2: If no FFmpeg running, use playhead logic
+                elif 0 <= playhead_index < len(files):
                     entry_at_playhead = files[playhead_index]
+                    
                     # Check if playlist has changed - entry at playhead index doesn't match playhead path
                     if playhead_path and entry_at_playhead != playhead_path:
                         # Playlist changed, search for the episode path
@@ -642,7 +696,6 @@ def run_stream() -> None:
                             # Episode not found in playlist, advance past playhead index
                             LOGGER.info("Playhead episode not found in playlist, advancing past index %d", playhead_index)
                             # Check if there's a bumper block marker at the playhead index or right after
-                            # If so, start there instead of skipping it
                             if playhead_index < len(files) and (is_bumper_block(files[playhead_index]) or is_weather_bumper(files[playhead_index])):
                                 current_index = playhead_index
                                 LOGGER.info("Found bumper block at playhead index %d, starting there", current_index)
@@ -655,6 +708,7 @@ def run_stream() -> None:
                                 new_entry = files[current_index]
                                 if is_episode_entry(new_entry) or is_bumper_block(new_entry) or is_weather_bumper(new_entry):
                                     update_playhead(new_entry if is_episode_entry(new_entry) else "", current_index, playlist_mtime)
+                    
                     # If playhead points to a marker but path is an episode, find the episode
                     elif (is_bumper_block(entry_at_playhead) or is_weather_bumper(entry_at_playhead)) and playhead_path:
                         # Search for the episode path
@@ -666,47 +720,22 @@ def run_stream() -> None:
                         else:
                             # Episode not found, use playhead index
                             current_index = playhead_index
+                    
+                    # If playhead points to an episode and matches path, use it
+                    elif is_episode_entry(entry_at_playhead) and playhead_path == entry_at_playhead:
+                        # Episode at playhead appears to be completed (no FFmpeg running)
+                        # Advance to next entry
+                        LOGGER.info("Episode at playhead index %d appears completed (no FFmpeg), advancing", playhead_index)
+                        current_index = playhead_index + 1
+                        if current_index >= len(files):
+                            current_index = 0
                     else:
-                        # If playhead points to an episode, check if it's already completed
-                        # by checking if FFmpeg is still running for it
-                        if is_episode_entry(entry_at_playhead) and playhead_path == entry_at_playhead:
-                            # Check if FFmpeg is still streaming this file
-                            import subprocess
-                            ffmpeg_running = False
-                            try:
-                                result = subprocess.run(
-                                    ["ps", "aux"],
-                                    capture_output=True,
-                                    text=True,
-                                    timeout=2,
-                                )
-                                for line in result.stdout.split("\n"):
-                                    if "ffmpeg" in line.lower() and playhead_path in line and "stream.m3u8" in line:
-                                        ffmpeg_running = True
-                                        break
-                            except Exception:
-                                pass
-                            
-                            if not ffmpeg_running:
-                                # Episode completed, advance to next entry
-                                LOGGER.info("Episode at playhead index %d appears completed (no FFmpeg), advancing", playhead_index)
-                                # If playhead points to a bumper block or marker, skip past it to next episode
-                                if is_bumper_block(entry_at_playhead) or is_weather_bumper(entry_at_playhead):
-                                    # Skip past bumper block to next episode
-                                    current_index = playhead_index + 1
-                                    while current_index < len(files) and not is_episode_entry(files[current_index]):
-                                        current_index += 1
-                                    if current_index >= len(files):
-                                        current_index = 0
-                                    LOGGER.info("Skipped past bumper block to episode at index %d", current_index)
-                                else:
-                                    current_index = playhead_index + 1
-                                    if current_index >= len(files):
-                                        current_index = 0
-                            else:
-                                current_index = playhead_index
-                        else:
-                            current_index = playhead_index
+                        # Default: use playhead index
+                        current_index = playhead_index
+                else:
+                    # Invalid playhead index, start from beginning
+                    current_index = 0
+                    LOGGER.warning("Invalid playhead index %d, starting from beginning", playhead_index)
             
             # Main loop: process current entry
             if current_index >= len(files):
