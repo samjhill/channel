@@ -589,7 +589,9 @@ class BumperBlockGenerator:
                 )
                 try:
                     # Generate block with music (for pre-generation)
-                    block = self.generate_block(**block_spec, skip_music=False)
+                    # Remove episode_path from spec as it's not a parameter of generate_block()
+                    gen_spec = {k: v for k, v in block_spec.items() if k != "episode_path"}
+                    block = self.generate_block(**gen_spec, skip_music=False)
                     if block:
                         # Store in cache for later retrieval
                         spec_hash = self._spec_hash(
