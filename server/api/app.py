@@ -45,6 +45,7 @@ from ..playlist_service import (
     entry_type,
     find_segment_index_for_entry,
     flatten_segments,
+    is_episode_entry,
     load_playhead_state,
     load_playlist_entries,
     resolve_playhead_path,
@@ -88,7 +89,11 @@ def _resolve_hls_dir() -> Path:
 
 
 HLS_DIR = _resolve_hls_dir()
-PREVIEW_VIDEO_PATH = HLS_DIR / "preview_block.mp4"
+def _get_preview_video_path() -> Path:
+    """Get preview video path with timestamp to prevent caching."""
+    import time
+    timestamp = int(time.time())
+    return HLS_DIR / f"preview_block_{timestamp}.mp4"
 BUMPER_BLOCK_MARKER = "BUMPER_BLOCK"
 
 
@@ -390,26 +395,42 @@ def skip_current_episode(channel_id: str) -> Dict[str, Any]:
         next_index = 0
         LOGGER.debug("Wrapped around to index 0")
 
-    # Advance to the next actual media entry (skip markers like BUMPER_BLOCK / WEATHER_BUMPER)
-    def _is_marker(entry: str) -> bool:
-        normalized = entry.strip().upper()
-        return normalized in {"BUMPER_BLOCK", "WEATHER_BUMPER"}
+    # Use segments to find the next episode (consistent with playlist view)
+    # This ensures skip button behavior matches what the playlist shows
+    segments = build_playlist_segments(entries)
+    current_segment_idx = find_segment_index_for_entry(segments, current_path)
     
-    def _is_episode_entry(entry: str) -> bool:
-        """Check if entry is an episode file (not a marker)."""
-        normalized = entry.strip().upper()
-        if normalized in {"BUMPER_BLOCK", "WEATHER_BUMPER"}:
-            return False
-        # Check if it's a file path (contains /)
-        return "/" in entry and not entry.startswith("#")
-
-    safety_counter = 0
-    # Skip markers, but also skip past bumper blocks to find the next episode
-    while (_is_marker(entries[next_index]) or not _is_episode_entry(entries[next_index])) and safety_counter < len(entries):
-        next_index = (next_index + 1) % len(entries)
-        safety_counter += 1
-
-    next_path = entries[next_index]
+    if current_segment_idx < 0:
+        # Current episode not found in segments, fall back to raw entry search
+        LOGGER.warning("Current episode not found in segments, using raw entry search")
+        safety_counter = 0
+        # Skip markers, but also skip past bumper blocks to find the next episode
+        while (not is_episode_entry(entries[next_index])) and safety_counter < len(entries):
+            next_index = (next_index + 1) % len(entries)
+            safety_counter += 1
+        next_path = entries[next_index]
+    else:
+        # Use segments to find next episode
+        next_segment_idx = current_segment_idx + 1
+        if next_segment_idx >= len(segments):
+            next_segment_idx = 0  # Wrap around
+        
+        next_segment = segments[next_segment_idx]
+        next_path = next_segment["episode_path"]
+        
+        # Find the raw entry index for this episode path
+        try:
+            next_index = entries.index(next_path)
+        except ValueError:
+            # Fallback: search for episode by filename
+            next_filename = Path(next_path).name
+            for i, entry in enumerate(entries):
+                if is_episode_entry(entry) and entry.endswith(next_filename):
+                    next_index = i
+                    break
+            else:
+                LOGGER.error("Could not find next episode in raw entries: %s", next_path)
+                raise ValueError(f"Next episode not found in entries: {next_path}")
     new_state = {
         "current_path": next_path,
         "current_index": next_index,
@@ -987,7 +1008,7 @@ def _generate_preview_video(bumpers: List[str]) -> Path:
     
     preview_dir = HLS_DIR
     preview_dir.mkdir(parents=True, exist_ok=True)
-    preview_path = PREVIEW_VIDEO_PATH
+    preview_path = _get_preview_video_path()
     
     # Check if all bumper files exist
     for bumper_path in bumpers:
@@ -1051,25 +1072,8 @@ def _find_next_bumper_block(entries: List[str], start_index: int) -> Dict[str, A
     generator = get_generator()
     
     # Try to peek at the next pre-generated block without removing it
-    first_block = generator.peek_next_pregenerated_block(episode_path=None)
-    if first_block and first_block.episode_path:
-        # Find this episode in the playlist to get its index
-        try:
-            episode_idx = entries.index(first_block.episode_path)
-            # Find the bumper block marker before this episode
-            block_idx = episode_idx - 1
-            while block_idx >= 0 and entries[block_idx].strip().upper() != BUMPER_BLOCK_MARKER:
-                block_idx -= 1
-            
-            if block_idx >= 0:
-                return {
-                    "block": first_block,
-                    "block_index": block_idx,
-                    "episode_index": episode_idx,
-                    "episode_path": first_block.episode_path,
-                }
-        except ValueError:
-            pass  # Episode not found in playlist, continue with fallback
+    # But we'll still need to verify it matches the playlist, so skip this optimization
+    # and go straight to searching the playlist for the next bumper block
     
     # Fallback: search playlist for next bumper block marker
     total = len(entries)
@@ -1082,38 +1086,100 @@ def _find_next_bumper_block(entries: List[str], start_index: int) -> Dict[str, A
             continue
         
         next_episode_idx = current + 1
-        while next_episode_idx < total and entry_type(entries[next_episode_idx]) != "episode":
+        while next_episode_idx < total and not is_episode_entry(entries[next_episode_idx]):
             next_episode_idx += 1
         
         if next_episode_idx >= total:
             continue
         
-        # Check if weather should be included based on config and probability
+        # Verify we found a valid episode
+        episode_path = entries[next_episode_idx]
+        if not episode_path or not os.path.exists(episode_path):
+            LOGGER.warning("Preview: Episode path not found or doesn't exist: %s", episode_path)
+            continue
+        
+        from pathlib import Path
+        LOGGER.info("Preview: Found next episode at index %d: %s", next_episode_idx, Path(episode_path).name)
+        
+        # Check if weather should be included using unified function
         # (Weather is determined by probability when blocks are queued, not by playlist markers)
         weather_bumper_marker = None
         try:
-            from server.generate_playlist import load_weather_config
-            import random
-            weather_cfg = load_weather_config()
-            if weather_cfg.get("enabled", False):
-                weather_prob = weather_cfg.get("probability_between_episodes", 0.0)
-                # Use a deterministic seed based on episode path to ensure consistency
-                # This ensures the preview matches what will actually play
-                import hashlib
-                episode_path = entries[next_episode_idx]
-                seed = int(hashlib.md5(episode_path.encode()).hexdigest()[:8], 16)
-                rng = random.Random(seed)
-                if weather_prob > 0 and rng.random() <= weather_prob:
-                    weather_bumper_marker = "WEATHER_BUMPER"
+            from server.stream import _should_include_weather
+            if _should_include_weather(episode_path):
+                weather_bumper_marker = "WEATHER_BUMPER"
         except Exception as e:
             LOGGER.debug("Failed to check weather config: %s", e)
         
         # Try to peek at pre-generated block first (for preview, don't remove)
-        episode_path = entries[next_episode_idx]
+        # episode_path was already set above
+        LOGGER.info("Preview: Looking for bumper block for episode: %s (index %d)", Path(episode_path).name, next_episode_idx)
+        
         block = generator.peek_next_pregenerated_block(episode_path=episode_path)
         if not block:
             # Fallback: try any available block
+            LOGGER.info("Preview: No block found for specific episode, trying any available block")
             block = generator.peek_next_pregenerated_block(episode_path=None)
+        
+        # If we got a pre-generated block, ensure it has the correct up-next bumper for this episode
+        # Pre-generated blocks may have been created for a different episode
+        if block:
+            try:
+                from server.stream import _get_up_next_bumper
+                from server.generate_playlist import infer_show_title_from_path, extract_episode_metadata
+                from pathlib import Path
+                import copy
+                
+                # Log what episode this block was created for
+                if block.episode_path:
+                    LOGGER.info("Preview: Found pre-generated block created for: %s", Path(block.episode_path).name)
+                else:
+                    LOGGER.info("Preview: Found pre-generated block (no episode_path stored)")
+                
+                # Log current episode info
+                show_label = infer_show_title_from_path(episode_path)
+                metadata = extract_episode_metadata(episode_path)
+                LOGGER.info("Preview: Current episode - Show: %s, Metadata: %s", show_label, metadata)
+                
+                # Create a copy so we don't modify the cached version (peek, not consume)
+                block = copy.deepcopy(block)
+                
+                # Log existing bumpers in block
+                LOGGER.info("Preview: Block has %d bumpers: %s", len(block.bumpers), 
+                          [Path(b).name for b in block.bumpers])
+                
+                # Get the correct up-next bumper for this episode
+                correct_up_next = _get_up_next_bumper(episode_path)
+                LOGGER.info("Preview: Correct up-next bumper for this episode: %s", 
+                          Path(correct_up_next).name if correct_up_next else "None")
+                
+                if correct_up_next and block.bumpers:
+                    # Replace up-next bumper in the block with the correct one
+                    up_next_replaced = False
+                    for i, bumper_path in enumerate(block.bumpers):
+                        # Check if this is an up-next bumper (generic or JIT)
+                        if "/bumpers/up_next/" in bumper_path or "/up_next_temp/" in bumper_path:
+                            old_bumper_name = Path(bumper_path).name
+                            new_bumper_name = Path(correct_up_next).name
+                            LOGGER.info("Preview: Found up-next bumper at index %d: %s", i, old_bumper_name)
+                            
+                            if bumper_path != correct_up_next:
+                                LOGGER.info("Preview: REPLACING up-next bumper: %s -> %s", old_bumper_name, new_bumper_name)
+                                block.bumpers[i] = correct_up_next
+                                up_next_replaced = True
+                            else:
+                                LOGGER.info("Preview: Up-next bumper already correct: %s", new_bumper_name)
+                                up_next_replaced = True
+                            break
+                    
+                    if not up_next_replaced:
+                        LOGGER.warning("Preview: Could not find up-next bumper in preview block to replace. Block bumpers: %s",
+                                     [Path(b).name for b in block.bumpers])
+                    else:
+                        LOGGER.info("Preview: Final block bumpers after replacement: %s",
+                                   [Path(b).name for b in block.bumpers])
+            except Exception as e:
+                LOGGER.error("Preview: Failed to update up-next bumper in preview block: %s", e, exc_info=True)
         
         # If no pre-generated block available, generate on-the-fly for preview
         # (API server runs in separate process, so doesn't share pre-generated blocks)
@@ -1121,20 +1187,17 @@ def _find_next_bumper_block(entries: List[str], start_index: int) -> Dict[str, A
             try:
                 # Generate block with weather if weather marker was found
                 from server.stream import resolve_bumper_block, _render_weather_bumper_jit
-                from server.generate_playlist import load_weather_config
                 
-                # Check weather config and render weather bumper if needed
+                # Render weather bumper if needed (using unified weather check)
                 weather_bumper = None
                 if weather_bumper_marker:
                     try:
-                        weather_cfg = load_weather_config()
-                        if weather_cfg.get("enabled", False):
-                            LOGGER.info("Rendering weather bumper for preview...")
-                            weather_bumper = _render_weather_bumper_jit()
-                            if weather_bumper:
-                                LOGGER.info("Successfully rendered weather bumper: %s", weather_bumper)
-                            else:
-                                LOGGER.warning("Weather bumper rendering returned None (API key may be missing)")
+                        LOGGER.info("Rendering weather bumper for preview...")
+                        weather_bumper = _render_weather_bumper_jit()
+                        if weather_bumper:
+                            LOGGER.info("Successfully rendered weather bumper: %s", weather_bumper)
+                        else:
+                            LOGGER.warning("Weather bumper rendering returned None (API key may be missing)")
                     except Exception as e:
                         LOGGER.warning("Failed to render weather bumper for preview: %s", e, exc_info=True)
                 
@@ -1190,11 +1253,62 @@ def _find_next_bumper_block(entries: List[str], start_index: int) -> Dict[str, A
 def _build_bumper_preview_payload() -> Dict[str, Any]:
     """Build bumper preview payload from pre-generated block."""
     entries, _ = load_playlist_entries()
-    playhead = load_playhead_state(force_reload=True) or {}
-    start_index = playhead.get("current_index", 0)
     
-    info = _find_next_bumper_block(entries, start_index)
+    # Use the same logic as the "next 25" endpoint to find the actual next episode
+    # This ensures consistency between the playlist view and the preview
+    segments = build_playlist_segments(entries)
+    playhead = load_playhead_state(force_reload=True) or {}
+    current_idx = _resolve_current_segment_index(segments, playhead)
+    
+    # Find the next episode segment
+    # All segments returned by build_playlist_segments are episode segments
+    if not segments:
+        raise ValueError("No segments found in playlist")
+    
+    # Get next segment after current
+    if current_idx >= 0 and current_idx < len(segments) - 1:
+        next_episode_segment = segments[current_idx + 1]
+    elif current_idx >= 0 and current_idx == len(segments) - 1:
+        # Wrap around to start
+        next_episode_segment = segments[0]
+    else:
+        # No current segment found, use first segment
+        next_episode_segment = segments[0]
+    
+    # Find the bumper block for this episode in the raw entries
+    next_episode_path = next_episode_segment.get("episode_path")
+    if not next_episode_path:
+        raise ValueError("Next episode segment has no episode_path")
+    
+    # Find the index of this episode in the raw entries
+    try:
+        next_episode_idx = entries.index(next_episode_path)
+    except ValueError:
+        # Try to find by matching the path
+        for i, entry in enumerate(entries):
+            if is_episode_entry(entry) and entry.endswith(Path(next_episode_path).name):
+                next_episode_idx = i
+                break
+        else:
+            raise ValueError(f"Could not find episode in playlist: {next_episode_path}")
+    
+    # Find the bumper block marker before this episode
+    bumper_block_idx = next_episode_idx - 1
+    while bumper_block_idx >= 0 and entries[bumper_block_idx].strip().upper() != BUMPER_BLOCK_MARKER:
+        bumper_block_idx -= 1
+    
+    if bumper_block_idx < 0:
+        raise ValueError(f"No bumper block found before episode at index {next_episode_idx}")
+    
+    LOGGER.info("Preview: Next episode is %s at index %d, bumper block at index %d", 
+               Path(next_episode_path).name, next_episode_idx, bumper_block_idx)
+    
+    info = _find_next_bumper_block(entries, bumper_block_idx)
     block = info["block"]
+    
+    # Log final bumpers before generating preview video
+    LOGGER.info("Preview: Generating preview video with bumpers: %s", 
+              [Path(b).name for b in block.bumpers])
     
     # Generate preview video from the pre-generated block
     preview_path = _generate_preview_video(block.bumpers)
@@ -1236,10 +1350,14 @@ def get_next_bumper_preview() -> Dict[str, Any]:
 
 @app.get("/api/bumper-preview/video")
 def download_bumper_preview() -> FileResponse:
-    if not PREVIEW_VIDEO_PATH.exists():
+    # Find the most recent preview video file
+    preview_files = sorted(HLS_DIR.glob("preview_block_*.mp4"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not preview_files:
         raise HTTPException(status_code=404, detail="No bumper preview available")
+    
+    preview_path = preview_files[0]
     return FileResponse(
-        PREVIEW_VIDEO_PATH,
+        preview_path,
         media_type="video/mp4",
         filename="bumper_preview.mp4",
     )

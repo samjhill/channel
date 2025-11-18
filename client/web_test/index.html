@@ -45,7 +45,8 @@
           liveSyncDuration: 20,
           liveMaxLatencyDuration: 120,
           maxBufferSize: 60 * 1000 * 1000,
-          maxBufferHole: 0.5,
+          // Allow seeking over small buffer holes (increased from 0.5 to 1.0)
+          maxBufferHole: 1.0,
           startLevel: -1,
           // Force more frequent manifest reloads to detect skips faster
           manifestLoadingTimeOut: 10000,
@@ -57,8 +58,9 @@
           nudgeMaxRetry: 3,
           maxFragLoadingTimeMs: 20000,
           fragLoadingTimeOut: 20000,
-          fragLoadingMaxRetry: 4,
-          fragLoadingRetryDelay: 1000,
+          // Increased retries for buffer holes
+          fragLoadingMaxRetry: 6,
+          fragLoadingRetryDelay: 500,
           // Prevent aggressive seeking that causes buffer starvation
           maxSeekHole: 2,
           // Ensure we maintain buffer ahead of playback

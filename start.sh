@@ -202,6 +202,26 @@ start_admin_ui() {
     echo -e "  Admin: http://localhost:${ADMIN_UI_PORT}"
 }
 
+# Function to start HLS server (for baremetal mode)
+start_hls_server() {
+    echo -e "${BLUE}Starting HLS server...${NC}"
+    
+    HLS_PORT=8080
+    if port_in_use "$HLS_PORT"; then
+        echo -e "${YELLOW}Port ${HLS_PORT} is already in use. Skipping HLS server.${NC}"
+        return 0
+    fi
+    
+    # Start HLS server in background
+    echo -e "${BLUE}Starting HLS server on port ${HLS_PORT}...${NC}"
+    python3 server/serve_hls.py > /tmp/tvchannel_hls_server.log 2>&1 &
+    HLS_SERVER_PID=$!
+    echo "$HLS_SERVER_PID" >> "$PID_FILE"
+    
+    echo -e "${GREEN}HLS server started on port ${HLS_PORT}${NC}"
+    echo -e "  Stream: http://localhost:${HLS_PORT}/channel/stream.m3u8"
+}
+
 # Function to start web test client
 start_test_client() {
     echo -e "${BLUE}Starting web test client...${NC}"
@@ -239,6 +259,7 @@ main() {
     START_DOCKER=true
     START_API=true
     START_ADMIN_UI=true
+    START_HLS_SERVER=true
     START_TEST_CLIENT=true
     
     while [[ $# -gt 0 ]]; do
@@ -289,6 +310,12 @@ main() {
     # Start services
     if [ "$START_DOCKER" = true ]; then
         start_docker
+        echo ""
+    fi
+    
+    # Start HLS server if not using Docker (Docker includes nginx)
+    if [ "$START_DOCKER" = false ] && [ "$START_HLS_SERVER" = true ]; then
+        start_hls_server
         echo ""
     fi
     

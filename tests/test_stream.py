@@ -10,123 +10,35 @@ import pytest
 
 # Import stream module functions
 from server.stream import (
-    build_overlay_args,
-    format_number,
+    is_bumper_block,
+    is_weather_bumper,
     load_playlist,
-    overlay_position_expr,
-    probe_video_height,
-    resolve_assets_root,
     stream_file,
+    reset_hls_output,
+    cleanup_bumpers,
+    _should_include_weather,
+    _get_up_next_bumper,
+    resolve_bumper_block,
 )
 
 
 @pytest.mark.unit
-def test_resolve_assets_root(monkeypatch):
-    """Test resolving assets root directory."""
-    # Test with environment variable
-    test_path = "/custom/assets"
-    monkeypatch.setenv("HBN_ASSETS_ROOT", test_path)
-    result = resolve_assets_root()
-    assert result == test_path
-
-    # Test without environment variable (will use default or fallback)
-    monkeypatch.delenv("HBN_ASSETS_ROOT", raising=False)
-    result = resolve_assets_root()
-    assert isinstance(result, str)
-    assert len(result) > 0
+def test_is_bumper_block():
+    """Test bumper block marker detection."""
+    assert is_bumper_block("BUMPER_BLOCK") is True
+    assert is_bumper_block("bumper_block") is True
+    assert is_bumper_block("  BUMPER_BLOCK  ") is True
+    assert is_bumper_block("/path/to/episode.mp4") is False
+    assert is_bumper_block("") is False
 
 
 @pytest.mark.unit
-def test_format_number():
-    """Test number formatting."""
-    assert format_number(1.0) == "1"
-    assert format_number(1.5) == "1.5"
-    assert format_number(0.8) == "0.8"
-    assert format_number(0.1234) == "0.1234"
-    assert format_number(0.0) == "0"
-
-
-@pytest.mark.unit
-def test_overlay_position_expr():
-    """Test overlay position expression generation."""
-    x, y = overlay_position_expr("top-left", 40)
-    assert x == "40"
-    assert y == "40"
-
-    x, y = overlay_position_expr("top-right", 40)
-    assert "main_w-overlay_w-40" in x
-    assert y == "40"
-
-    x, y = overlay_position_expr("bottom-left", 40)
-    assert x == "40"
-    assert "main_h-overlay_h-40" in y
-
-    x, y = overlay_position_expr("bottom-right", 40)
-    assert "main_w-overlay_w-40" in x
-    assert "main_h-overlay_h-40" in y
-
-    # Default to top-right for invalid position
-    x, y = overlay_position_expr("invalid", 40)
-    assert "main_w-overlay_w-40" in x
-    assert y == "40"
-
-
-@pytest.mark.unit
-@patch("subprocess.run")
-def test_probe_video_height(mock_run: MagicMock):
-    """Test video height probing."""
-    # Mock successful ffprobe call
-    mock_result = MagicMock()
-    mock_result.returncode = 0
-    mock_result.stdout = "1080"
-    mock_run.return_value = mock_result
-
-    height = probe_video_height("/path/to/video.mp4")
-    assert height == 1080
-    mock_run.assert_called_once()
-
-    # Test caching
-    height2 = probe_video_height("/path/to/video.mp4")
-    assert height2 == 1080
-    # Should use cache, so only one call
-    assert mock_run.call_count == 1
-
-
-@pytest.mark.unit
-@patch("subprocess.run")
-def test_probe_video_height_failure(mock_run: MagicMock):
-    """Test video height probing with failure."""
-    # Mock failed ffprobe call
-    mock_result = MagicMock()
-    mock_result.returncode = 1
-    mock_run.side_effect = subprocess.CalledProcessError(1, "ffprobe")
-
-    # Clear cache first
-    import server.stream as stream_module
-
-    if "/path/to/video.mp4" in stream_module._video_height_cache:
-        del stream_module._video_height_cache["/path/to/video.mp4"]
-
-    height = probe_video_height("/path/to/video.mp4")
-    assert height is None
-
-
-@pytest.mark.unit
-@patch("os.path.isfile")
-def test_build_overlay_args(mock_isfile: MagicMock):
-    """Test building overlay arguments."""
-    # Test with bug image file
-    mock_isfile.return_value = True
-    args, has_overlay = build_overlay_args(1080)
-    assert has_overlay is True
-    assert "-loop" in args
-    assert "-filter_complex" in args
-
-    # Test without bug image file
-    mock_isfile.return_value = False
-    args, has_overlay = build_overlay_args(1080)
-    assert has_overlay is False
-    assert len(args) == 0
+def test_is_weather_bumper():
+    """Test weather bumper marker detection."""
+    assert is_weather_bumper("WEATHER_BUMPER") is True
+    assert is_weather_bumper("weather_bumper") is True
+    assert is_weather_bumper("/bumpers/weather/test.mp4") is True
+    assert is_weather_bumper("/path/to/episode.mp4") is False
 
 
 @pytest.mark.unit
@@ -177,18 +89,21 @@ def test_stream_file_success(
         "current_index": 0,
     }
 
-    # Mock FFmpeg process
+    # Mock FFmpeg process - needs to stay running initially, then finish successfully
     mock_process = MagicMock()
-    mock_process.poll.return_value = 0  # Process finished
+    mock_process.poll.side_effect = [None, None, 0]  # None = still running, then 0 = finished
     mock_process.returncode = 0  # Success
     mock_process.stderr = None
     mock_popen.return_value = mock_process
 
-    # Mock probe_video_height
-    with patch("server.stream.probe_video_height", return_value=1080):
-        with patch("server.stream.build_overlay_args", return_value=([], False)):
-            result = stream_file("/path/to/video.mp4", 0, 1234567890.0)
-            assert result is True
+    # Mock time.sleep to speed up test
+    with patch("server.stream.BUG_IMAGE_PATH") as mock_bug_path, \
+         patch("server.stream.time.sleep"), \
+         patch("server.stream.os.path.exists") as mock_seg_exists:
+        mock_bug_path.exists.return_value = False
+        mock_seg_exists.return_value = True  # Segments exist
+        result = stream_file("/path/to/video.mp4", 0, 1234567890.0)
+        assert result is True
 
 
 @pytest.mark.unit
@@ -243,7 +158,7 @@ def test_stream_file_ffmpeg_failure(
     mock_process.stderr.read.return_value = b"FFmpeg error"
     mock_popen.return_value = mock_process
 
-    with patch("server.stream.probe_video_height", return_value=1080):
-        with patch("server.stream.build_overlay_args", return_value=([], False)):
-            result = stream_file("/path/to/video.mp4", 0, 1234567890.0)
-            assert result is False
+    with patch("server.stream.BUG_IMAGE_PATH") as mock_bug_path:
+        mock_bug_path.exists.return_value = False
+        result = stream_file("/path/to/video.mp4", 0, 1234567890.0)
+        assert result is False

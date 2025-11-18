@@ -168,6 +168,8 @@ def find_existing_bumper(
     """
     base_name = safe_filename(show_title)
     
+    LOGGER.debug("find_existing_bumper: Looking for bumper - Show=%s, BaseName=%s", show_title, base_name)
+    
     # Skip specific-episode bumpers - they are generated dynamically
     # Only return generic bumpers that exist as files
     
@@ -175,6 +177,7 @@ def find_existing_bumper(
     generic_filename = f"{base_name}.mp4"
     generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
     if os.path.exists(generic_bumper_path) and _validate_bumper_file(generic_bumper_path):
+        LOGGER.debug("find_existing_bumper: Found exact match: %s", generic_filename)
         return generic_bumper_path
     
     # If exact match fails, try fuzzy matching: extract just the show name
@@ -210,9 +213,13 @@ def find_existing_bumper(
         simplified_filename = f"{simplified_base}.mp4"
         simplified_bumper_path = os.path.join(BUMPERS_DIR, simplified_filename)
         if os.path.exists(simplified_bumper_path) and _validate_bumper_file(simplified_bumper_path):
-            LOGGER.debug("Found bumper using simplified show name: %s -> %s", show_title, simplified_title)
+            LOGGER.info("find_existing_bumper: Found bumper using simplified show name: %s -> %s (%s)", 
+                       show_title, simplified_title, simplified_filename)
             return simplified_bumper_path
+        else:
+            LOGGER.debug("find_existing_bumper: Simplified bumper not found: %s", simplified_filename)
 
+    LOGGER.debug("find_existing_bumper: No bumper found for %s", show_title)
     return None
 
 

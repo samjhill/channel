@@ -24,9 +24,20 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 # Process configurations
+# Detect if running in Docker or baremetal
+if Path("/app").exists():
+    # Docker paths
+    GENERATE_PLAYLIST_CMD = ["python3", "/app/server/generate_playlist.py"]
+    STREAM_CMD = ["python3", "/app/server/stream.py"]
+else:
+    # Baremetal paths
+    repo_root = Path(__file__).resolve().parent.parent
+    GENERATE_PLAYLIST_CMD = ["python3", str(repo_root / "server" / "generate_playlist.py")]
+    STREAM_CMD = ["python3", str(repo_root / "server" / "stream.py")]
+
 PROCESSES = {
     "generate_playlist": {
-        "command": ["python3", "/app/server/generate_playlist.py"],
+        "command": GENERATE_PLAYLIST_CMD,
         "restart_delay": 5,  # Initial delay in seconds
         "max_restart_delay": 300,  # Maximum delay (5 minutes)
         "restart_count": 0,
@@ -34,7 +45,7 @@ PROCESSES = {
         "process": None,
     },
     "stream": {
-        "command": ["python3", "/app/stream.py"],
+        "command": STREAM_CMD,
         "restart_delay": 5,
         "max_restart_delay": 300,
         "restart_count": 0,

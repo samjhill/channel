@@ -614,3 +614,117 @@ def get_last_watched_episode() -> Optional[str]:
     """Get the path of the last watched episode."""
     progress = load_watch_progress()
     return progress.get("last_watched")
+
+
+def resolve_current_episode(
+    entries: List[str],
+    playhead_state: Optional[Dict[str, Any]] = None,
+    ffmpeg_streaming_file: Optional[str] = None,
+) -> Tuple[Optional[int], Optional[str], Optional[int]]:
+    """Unified function to resolve the current episode.
+    
+    Returns:
+        Tuple of (raw_entry_index, episode_path, segment_index)
+        Returns (-1, None, -1) if not found.
+    
+    Priority:
+        1. FFmpeg streaming file (if provided) - source of truth for what's actually playing
+        2. Playhead state - what the playhead says is current
+        3. Fallback to index 0
+    
+    This function uses segments to ensure consistency with the playlist view.
+    """
+    if not entries:
+        return (-1, None, -1)
+    
+    # Build segments for consistent episode lookup
+    segments = build_playlist_segments(entries)
+    
+    # Priority 1: FFmpeg streaming file (if provided)
+    if ffmpeg_streaming_file:
+        # Find the segment containing this file
+        for seg_idx, segment in enumerate(segments):
+            if segment["episode_path"] == ffmpeg_streaming_file:
+                # Find raw entry index
+                raw_idx = entries.index(ffmpeg_streaming_file)
+                return (raw_idx, ffmpeg_streaming_file, seg_idx)
+    
+    # Priority 2: Playhead state
+    if playhead_state:
+        current_path = playhead_state.get("current_path")
+        current_index = playhead_state.get("current_index", -1)
+        
+        if current_path:
+            # Find segment containing this path
+            seg_idx = find_segment_index_for_entry(segments, current_path)
+            if seg_idx >= 0:
+                # Find raw entry index
+                try:
+                    raw_idx = entries.index(current_path)
+                except ValueError:
+                    # Path not found, try to find by segment
+                    raw_idx = segments[seg_idx]["start"]
+                return (raw_idx, current_path, seg_idx)
+        
+        # Fallback: use playhead index if valid
+        if 0 <= current_index < len(entries):
+            entry = entries[current_index]
+            if is_episode_entry(entry):
+                seg_idx = find_segment_index_for_entry(segments, entry)
+                return (current_index, entry, seg_idx)
+    
+    # Priority 3: Fallback to first episode
+    if segments:
+        first_segment = segments[0]
+        first_episode = first_segment["episode_path"]
+        raw_idx = entries.index(first_episode)
+        return (raw_idx, first_episode, 0)
+    
+    return (-1, None, -1)
+
+
+def find_next_episode(
+    entries: List[str],
+    current_episode_path: Optional[str] = None,
+    current_segment_idx: Optional[int] = None,
+) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+    """Unified function to find the next episode.
+    
+    Returns:
+        Tuple of (episode_path, raw_entry_index, segment_index)
+        Returns (None, None, None) if not found.
+    
+    Uses segments to ensure consistency with the playlist view.
+    """
+    if not entries:
+        return (None, None, None)
+    
+    segments = build_playlist_segments(entries)
+    
+    if not segments:
+        return (None, None, None)
+    
+    # Find current segment index if not provided
+    if current_segment_idx is None and current_episode_path:
+        current_segment_idx = find_segment_index_for_entry(segments, current_episode_path)
+    
+    # Get next segment
+    if current_segment_idx is not None and current_segment_idx >= 0:
+        next_segment_idx = current_segment_idx + 1
+        if next_segment_idx >= len(segments):
+            next_segment_idx = 0  # Wrap around
+    else:
+        # No current segment found, use first segment
+        next_segment_idx = 0
+    
+    next_segment = segments[next_segment_idx]
+    next_episode_path = next_segment["episode_path"]
+    
+    # Find raw entry index
+    try:
+        raw_idx = entries.index(next_episode_path)
+    except ValueError:
+        # Fallback: use segment start index
+        raw_idx = next_segment["start"]
+    
+    return (next_episode_path, raw_idx, next_segment_idx)
