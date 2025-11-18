@@ -226,18 +226,27 @@ def stream_file(src: str, index: int, playlist_mtime: float) -> bool:
                 return False
             
             # Check for skip command
+            # Skip detection: only interrupt if playhead has moved to a significantly different entry
+            # For bumper blocks, we use the next episode index, so skip detection won't trigger
+            # during normal bumper playback unless there's a real skip
             playhead_state = load_playhead_state(force_reload=True)
             if playhead_state:
                 playhead_index = playhead_state.get("current_index", -1)
+                playhead_path = playhead_state.get("current_path", "")
+                # Only skip if playhead has moved to a different index
+                # Allow some tolerance for bumper blocks (they use next_episode_idx which is different)
                 if playhead_index >= 0 and playhead_index != index:
-                    LOGGER.info("Skip detected, interrupting stream")
-                    process.terminate()
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        process.kill()
-                        process.wait()
-                    return False
+                    # For bumper blocks, the index might be next_episode_idx which is different
+                    # Only skip if the difference is significant (more than 1)
+                    if abs(playhead_index - index) > 1:
+                        LOGGER.info("Skip detected (playhead index %d != stream index %d), interrupting stream", playhead_index, index)
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
+                        return False
             time.sleep(0.5)
         
         returncode = process.returncode
@@ -825,18 +834,67 @@ def run_stream() -> None:
                         find_existing_bumper,
                         extract_episode_metadata,
                         infer_show_title_from_path,
+                        load_weather_config,
                     )
                     show_label = infer_show_title_from_path(next_episode)
                     metadata = extract_episode_metadata(next_episode)
                     up_next_bumper = find_existing_bumper(show_label, metadata)
                     
+                    # Check if weather should be included based on probability
+                    weather_bumper_marker = None
+                    try:
+                        weather_cfg = load_weather_config()
+                        if weather_cfg.get("enabled", False):
+                            weather_prob = weather_cfg.get("probability_between_episodes", 0.0)
+                            if weather_prob > 0:
+                                # Use deterministic seed based on episode path for consistency
+                                import hashlib
+                                import random
+                                seed = int(hashlib.md5(next_episode.encode()).hexdigest()[:8], 16)
+                                rng = random.Random(seed)
+                                if rng.random() <= weather_prob:
+                                    weather_bumper_marker = "WEATHER_BUMPER"
+                                    LOGGER.info("Weather bumper should be included for episode: %s", Path(next_episode).name)
+                    except Exception as e:
+                        LOGGER.debug("Failed to check weather config: %s", e)
+                    
                     if up_next_bumper:
+                        # Try to get pre-generated block, checking both with and without weather
                         block = generator.get_pregenerated_block(
                             up_next_bumper=up_next_bumper,
                             sassy_card=None,
                             network_bumper=None,
-                            weather_bumper=None,
+                            weather_bumper=weather_bumper_marker,
                         )
+                        
+                        # If we got a block but weather should be included and wasn't, add it
+                        if block and weather_bumper_marker == "WEATHER_BUMPER":
+                            # Check if block already has weather bumper
+                            has_weather = any("/weather_temp/" in b or "/bumpers/weather/" in b for b in block.bumpers)
+                            if not has_weather:
+                                LOGGER.info("Pre-generated block missing weather bumper, rendering JIT and adding to block")
+                                try:
+                                    weather_bumper = _render_weather_bumper_jit()
+                                    if weather_bumper and os.path.exists(weather_bumper):
+                                        # Insert weather bumper in correct order: sassy, weather, up-next, network
+                                        # Find the correct insertion position
+                                        insert_pos = 0
+                                        # Look for sassy card first (should be at position 0)
+                                        for i, bumper in enumerate(block.bumpers):
+                                            if "/bumpers/sassy/" in bumper:
+                                                # Insert after sassy card
+                                                insert_pos = i + 1
+                                                break
+                                            elif "/bumpers/up_next/" in bumper or "/up_next_temp/" in bumper:
+                                                # Found up-next before sassy (shouldn't happen, but handle it)
+                                                # Insert before up-next
+                                                insert_pos = i
+                                                break
+                                        
+                                        block.bumpers.insert(insert_pos, weather_bumper)
+                                        LOGGER.info("Added weather bumper to pre-generated block at position %d (total bumpers: %d)", insert_pos, len(block.bumpers))
+                                except Exception as e:
+                                    LOGGER.warning("Failed to add weather bumper to pre-generated block: %s", e)
                 except Exception as e:
                     LOGGER.debug("Failed to get pre-generated block: %s", e)
                 
@@ -897,6 +955,10 @@ def run_stream() -> None:
                 if block and block.bumpers:
                     # Stream all bumpers sequentially
                     bumper_success = True
+                    # Use next_episode_idx for skip detection during bumper streaming
+                    # This prevents skip detection from interrupting bumper playback
+                    bumper_stream_index = next_episode_idx if next_episode_idx < len(files) else current_index
+                    
                     for i, bumper_path in enumerate(block.bumpers):
                         if not os.path.exists(bumper_path):
                             LOGGER.warning("Bumper file missing: %s", bumper_path)
@@ -906,7 +968,9 @@ def run_stream() -> None:
                         # Only reset playlist before first bumper, subsequent bumpers append seamlessly
                         if i == 0:
                             reset_hls_output(reason="bumper_block_start")
-                        if not stream_file(bumper_path, current_index, playlist_mtime):
+                        # Use bumper_stream_index to prevent skip detection from interrupting bumper playback
+                        # The playhead remains at the bumper block marker during streaming
+                        if not stream_file(bumper_path, bumper_stream_index, playlist_mtime):
                             LOGGER.warning("Bumper stream failed: %s", bumper_path)
                             bumper_success = False
                             break
@@ -922,7 +986,9 @@ def run_stream() -> None:
                             current_index = next_episode_idx
                             if current_index >= len(files):
                                 current_index = 0
-                            # Update playhead to next episode to prevent looping back
+                            
+                            # Update playhead to next episode BEFORE continuing loop
+                            # This ensures the playhead is correct when the loop reloads the playlist
                             LOGGER.info("Bumper block completed, advancing to episode at index %d", current_index)
                             if current_index < len(files):
                                 next_entry = files[current_index]
@@ -944,20 +1010,36 @@ def run_stream() -> None:
                                         current_index = 0
                                         if len(files) > 0 and is_episode_entry(files[0]):
                                             update_playhead(files[0], 0, playlist_mtime)
+                            
+                            # IMPORTANT: Break out of the loop iteration and let it reload the playlist
+                            # This ensures the playhead update is visible and prevents replaying the bumper block
+                            LOGGER.info("Bumper block complete, breaking to reload playlist with updated playhead")
                         except Exception as e:
                             LOGGER.error("Failed to update playhead after bumper block: %s", e, exc_info=True)
-                        # Continue loop to process the next episode
-                        continue
+                        # Break to reload playlist with updated playhead
+                        break
                     else:
                         LOGGER.warning("Bumper block failed, skipping to next episode")
                         current_index = next_episode_idx
                         if current_index >= len(files):
                             current_index = 0
+                        # Update playhead and break to reload playlist
+                        if current_index < len(files):
+                            next_entry = files[current_index]
+                            if is_episode_entry(next_entry):
+                                update_playhead(next_entry, current_index, playlist_mtime)
+                        break
                 else:
                     LOGGER.warning("Failed to resolve bumper block, skipping to next episode")
                     current_index = next_episode_idx
                     if current_index >= len(files):
                         current_index = 0
+                    # Update playhead and break to reload playlist
+                    if current_index < len(files):
+                        next_entry = files[current_index]
+                        if is_episode_entry(next_entry):
+                            update_playhead(next_entry, current_index, playlist_mtime)
+                    break
             
             # Skip other markers
             else:

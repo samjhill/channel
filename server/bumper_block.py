@@ -254,18 +254,35 @@ class BumperBlockGenerator:
         # Auto-draw sassy card if not provided
         if sassy_card is None:
             try:
-                from server.generate_playlist import SASSY_CARDS
+                from server.generate_playlist import SASSY_CARDS, SASSY_BUMPERS_DIR
                 sassy_card = SASSY_CARDS.draw_card()
-            except Exception:
-                pass
+                if not sassy_card:
+                    LOGGER.warning("SASSY_CARDS.draw_card() returned None - trying to find existing sassy cards")
+                    # Fallback: try to find any existing sassy card
+                    if os.path.exists(SASSY_BUMPERS_DIR):
+                        import glob
+                        existing_cards = glob.glob(os.path.join(SASSY_BUMPERS_DIR, "sassy_*.mp4"))
+                        if existing_cards:
+                            sassy_card = existing_cards[0]
+                            LOGGER.info("Using existing sassy card as fallback: %s", sassy_card)
+                        else:
+                            LOGGER.error("No sassy cards found in %s", SASSY_BUMPERS_DIR)
+                    else:
+                        LOGGER.error("Sassy bumpers directory does not exist: %s", SASSY_BUMPERS_DIR)
+            except Exception as e:
+                LOGGER.error("Failed to draw sassy card: %s", e, exc_info=True)
+                sassy_card = None
         
         # Auto-draw network bumper if not provided
         if network_bumper is None:
             try:
                 from server.generate_playlist import NETWORK_BUMPERS
                 network_bumper = NETWORK_BUMPERS.draw_bumper()
-            except Exception:
-                pass
+                if not network_bumper:
+                    LOGGER.debug("NETWORK_BUMPERS.draw_bumper() returned None - network bumper may not be due yet")
+            except Exception as e:
+                LOGGER.error("Failed to draw network bumper: %s", e, exc_info=True)
+                network_bumper = None
         
         # Handle weather bumper marker
         if weather_bumper == "WEATHER_BUMPER":
@@ -280,15 +297,30 @@ class BumperBlockGenerator:
         up_next_exists = up_next_bumper and os.path.exists(up_next_bumper)
         network_exists = network_bumper and os.path.exists(network_bumper)
 
+        # Log detailed status for debugging
+        LOGGER.debug(
+            "Bumper block status: sassy=%s (%s), weather=%s (%s), up_next=%s (%s), network=%s (%s)",
+            bool(sassy_exists),
+            sassy_card if sassy_card else "None",
+            bool(weather_exists),
+            weather_bumper if weather_bumper else "None",
+            bool(up_next_exists),
+            up_next_bumper if up_next_bumper else "None",
+            bool(network_exists),
+            network_bumper if network_bumper else "None",
+        )
+
         # Require sassy and up_next, but weather is optional
         # Weather might not be generated if API key is missing or disabled
         if not (sassy_exists and up_next_exists):
-            LOGGER.warning(
-                "Incomplete bumper block spec (sassy=%s, weather=%s, up_next=%s) - skipping block",
-                bool(sassy_exists),
-                bool(weather_exists),
-                bool(up_next_exists),
+            error_msg = (
+                f"Incomplete bumper block spec - missing required bumpers:\n"
+                f"  sassy_card: {'exists' if sassy_exists else 'MISSING'} ({sassy_card or 'None'})\n"
+                f"  up_next_bumper: {'exists' if up_next_exists else 'MISSING'} ({up_next_bumper or 'None'})\n"
+                f"  weather_bumper: {'exists' if weather_exists else 'optional/missing'} ({weather_bumper or 'None'})\n"
+                f"  network_bumper: {'exists' if network_exists else 'optional/missing'} ({network_bumper or 'None'})"
             )
+            LOGGER.error(error_msg)
             return None
         
         # If weather is missing but was requested, log a warning but continue
@@ -391,12 +423,15 @@ class BumperBlockGenerator:
                         if "/bumpers/up_next/" in bumper_path:
                             original_bumpers_to_cleanup.append(bumper_path)
                 except Exception as e:
-                    LOGGER.error(f"Failed to add music to bumper {bumper_path}: {e}")
+                    LOGGER.error("Failed to add music to bumper %s: %s", bumper_path, e, exc_info=True)
                     # Fallback: use original bumper
                     if os.path.exists(bumper_path):
+                        LOGGER.warning("Using original bumper without music as fallback: %s", bumper_path)
                         block_bumpers.append(bumper_path)
                         if "/bumpers/up_next/" in bumper_path:
                             original_bumpers_to_cleanup.append(bumper_path)
+                    else:
+                        LOGGER.error("Original bumper file missing: %s", bumper_path)
             cumulative_offset += duration
         
         if not block_bumpers:
@@ -450,7 +485,7 @@ class BumperBlockGenerator:
                 loop_track=loop_track,
             )
         except Exception as e:
-            LOGGER.error(f"Failed to add music to bumper: {e}")
+            LOGGER.error("Failed to add music to bumper: %s", e, exc_info=True)
             raise
 
     def _probe_bumper_duration(self, bumper_path: str) -> Optional[float]:

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 import tempfile
@@ -65,9 +66,14 @@ _segments_playlist_mtime: float = 0.0
 
 app = FastAPI(title="Channel Admin API")
 
+# CORS configuration - restrict origins for security
+# Default to localhost for development, can be overridden via CORS_ORIGINS env var
+cors_origins_str = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:5174,http://localhost:3000")
+cors_origins = [origin.strip() for origin in cors_origins_str.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
