@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional
@@ -349,9 +350,21 @@ def render_up_next_bumper(
     show_title_clean = show_title.strip()
     show_title_display = show_title_clean.title()
     episode_label_display = (episode_label or "").strip()
+    
+    # Wrap long show titles to prevent overlap with subtitle
+    # Calculate max characters per line based on target width (72% of screen width)
+    max_title_width_px = width * 0.72
+    # Estimate: fontsize 80, average char width ~40px, so ~30 chars per line
+    # Use textwrap to wrap the title
+    title_font_temp = load_font(FONT_CANDIDATES_BOLD, size=80)
+    # Estimate character width (rough approximation)
+    char_width_estimate = title_font_temp.getbbox("M")[2] - title_font_temp.getbbox("M")[0]
+    max_chars_per_line = int(max_title_width_px / char_width_estimate) if char_width_estimate > 0 else 30
+    show_title_wrapped = "\n".join(textwrap.wrap(show_title_display, width=max_chars_per_line, break_long_words=False, break_on_hyphens=False))
+    
     title_font = compute_dynamic_font(
         draw_dummy,
-        show_title_display,
+        show_title_wrapped.split("\n")[0] if "\n" in show_title_wrapped else show_title_wrapped,  # Use first line for sizing
         target_width=width * 0.72,
         base_size=80,
         min_size=42,
@@ -440,7 +453,14 @@ def render_up_next_bumper(
                 up_next_y = int(height * 0.32) + slide_offset + wiggle
                 divider_y = up_next_y + 120
                 title_y = divider_y + 60
-                subtitle_y = title_y + 96
+                
+                # Calculate subtitle position based on title wrapping
+                # Each wrapped line adds approximately fontsize + line spacing
+                title_lines = show_title_wrapped.split("\n")
+                line_height = title_font.size + 10  # Font size + line spacing
+                title_height = len(title_lines) * line_height
+                # Increase spacing to prevent overlap (96px base + extra for wrapped lines)
+                subtitle_y = title_y + max(96, title_height + 20)
 
                 upnext_fill = (*ImageColor.getrgb(PAPER_WHITE), int(255 * text_alpha))
                 draw.text(
@@ -471,12 +491,15 @@ def render_up_next_bumper(
                     *ImageColor.getrgb(PAPER_WHITE if text_alpha > 0.5 else STEEL_BLUE),
                     int(255 * text_alpha),
                 )
-                draw.text(
+                # Use multiline_text for wrapped titles
+                draw.multiline_text(
                     (center_x, title_y),
-                    show_title_display,
+                    show_title_wrapped,
                     font=title_font,
                     fill=title_fill,
-                    anchor="ma",
+                    anchor="ma",  # Middle anchor for multiline
+                    align="center",
+                    spacing=10,  # Line spacing
                 )
                 if episode_label_display and episode_font:
                     subtitle_fill = (

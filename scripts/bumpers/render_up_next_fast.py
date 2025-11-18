@@ -135,8 +135,11 @@ def render_up_next_bumper_fast(
             f"drawbox=x=(w-{divider_width})/2:y={divider_y}:w={divider_width}:h=6:color=0xEBA983:t=fill"
         )
         
-        # Show title
+        # Show title with text wrapping to prevent overlap with subtitle
         title_y = divider_y + 60
+        # Set max width for title (80% of screen width) to enable wrapping
+        # This ensures long titles wrap instead of overlapping the subtitle
+        max_title_width = int(width * 0.8)
         filter_parts.append(
             f"drawtext=text='{escape_text(show_title_display)}':"
             f"fontfile={font_path if font_path else 'Arial'}:"
@@ -144,12 +147,16 @@ def render_up_next_bumper_fast(
             f"fontcolor=0xF8F5E9:"
             f"x=(w-text_w)/2:"
             f"y={title_y}:"
+            f"text_w={max_title_width}:"  # Enable wrapping at max width
             f"box=0:boxborderw=0"
         )
         
         # Episode label (if provided)
+        # Increase spacing to account for potential title wrapping (96px base + extra for wrapped lines)
+        # Estimate: each wrapped line adds ~90px (fontsize 80 + line spacing)
+        # For safety, add extra space (120px total) to accommodate up to 2 lines
         if episode_label_display:
-            subtitle_y = title_y + 96
+            subtitle_y = title_y + 120  # Increased from 96 to 120 to prevent overlap
             filter_parts.append(
                 f"drawtext=text='{escape_text(episode_label_display)}':"
                 f"fontfile={font_path if font_path else 'Arial'}:"
