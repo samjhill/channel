@@ -21,6 +21,7 @@ ADMIN_UI_PORT="5174"
 TEST_CLIENT_PORT="8081"
 
 # Media directory (default: /Volumes/media/tv)
+# This is the HOST path that will be mounted to /media/tvchannel inside the container
 # Override with MEDIA_DIR environment variable or --media-dir flag
 MEDIA_DIR="${MEDIA_DIR:-/Volumes/media/tv}"
 

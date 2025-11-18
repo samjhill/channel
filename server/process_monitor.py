@@ -145,6 +145,26 @@ def main():
     
     LOGGER.info("Starting process monitor...")
     
+    # Ensure up-next bumper backgrounds are generated before starting processes
+    try:
+        LOGGER.info("Checking for up-next bumper backgrounds...")
+        bg_script = Path("/app/scripts/bumpers/generate_up_next_backgrounds.py")
+        if bg_script.exists():
+            result = subprocess.run(
+                [sys.executable, str(bg_script)],
+                capture_output=True,
+                timeout=600,  # 10 minute timeout
+                cwd="/app"
+            )
+            if result.returncode == 0:
+                LOGGER.info("Up-next bumper backgrounds ready")
+            else:
+                LOGGER.warning("Background generation had issues (may already exist): %s", result.stderr.decode()[:200] if result.stderr else "unknown")
+        else:
+            LOGGER.warning("Background generation script not found at %s", bg_script)
+    except Exception as e:
+        LOGGER.warning("Failed to check/generate backgrounds: %s (continuing anyway)", e)
+    
     # Start all processes
     for name, config in PROCESSES.items():
         start_process(name, config)

@@ -1036,6 +1036,39 @@ a:focus {
   border-bottom-color: var(--color-primary-hover);
 }
 
+.bumper-preview .preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.bumper-preview .preview-meta p {
+  margin: 0 0 0.35rem 0;
+  color: var(--color-text-muted);
+}
+
+.bumper-preview .bumper-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.bumper-preview .bumper-list li {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: rgba(15, 23, 42, 0.5);
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+}
+
 /* Form Grid Layouts */
 .form-grid {
   display: grid;

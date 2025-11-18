@@ -53,7 +53,7 @@ export interface PlaylistUpdatePayload {
   skipped: string[];
 }
 
-const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+export const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
@@ -66,7 +66,7 @@ async function handleResponse<T>(res: Response): Promise<T> {
 }
 
 // Create a fetch wrapper with timeout
-function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = 10000): Promise<Response> {
+function fetchWithTimeout(url: string, options: RequestInit = {}, timeout = 60000): Promise<Response> {
   return Promise.race([
     fetch(url, options),
     new Promise<Response>((_, reject) =>
@@ -202,5 +202,49 @@ export async function updateWeatherConfig(
     body: JSON.stringify(config)
   });
   return handleResponse<WeatherConfig>(res);
+}
+
+export interface BumperPreviewBumper {
+  path: string;
+  filename: string;
+  type: string;
+}
+
+export interface BumperPreviewResponse {
+  video_url: string;
+  block_id: string;
+  music_track?: string | null;
+  episode_path: string;
+  episode_filename: string;
+  bumpers: BumperPreviewBumper[];
+  generated_at: number;
+}
+
+export async function fetchBumperPreview(): Promise<BumperPreviewResponse> {
+  const cacheBust = Date.now();
+  const res = await fetchWithTimeout(`${API_BASE}/api/bumper-preview/next?ts=${cacheBust}`);
+  return handleResponse<BumperPreviewResponse>(res);
+}
+
+export interface LogResponse {
+  source: "docker" | "file" | "none";
+  container?: string;
+  path?: string;
+  message?: string;
+  lines: number;
+  logs: string[];
+  timestamp: number;
+}
+
+export async function fetchLogs(
+  container: string = "tvchannel",
+  lines: number = 500
+): Promise<LogResponse> {
+  const params = new URLSearchParams({
+    container,
+    lines: lines.toString(),
+  });
+  const res = await fetchWithTimeout(`${API_BASE}/api/logs?${params}`);
+  return handleResponse<LogResponse>(res);
 }
 

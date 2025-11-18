@@ -14,6 +14,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Optional, List, Tuple
+import argparse
 
 import numpy as np
 from PIL import Image, ImageColor, ImageDraw, ImageFont
@@ -653,4 +654,86 @@ def render_network_brand_bumper(
             )
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Render the full network branding bumper."
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        default=None,
+        help="Output path for the bumper video (default: assets/bumpers/network/network_brand.mp4)",
+    )
+    parser.add_argument(
+        "-l",
+        "--logo",
+        default=None,
+        help="Path to the SVG (or PNG) logo to use (default: branding/hbn_logo_full.svg)",
+    )
+    parser.add_argument(
+        "--duration",
+        type=float,
+        default=8.0,
+        help="Duration in seconds (default: 8.0)",
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=30,
+        help="Frames per second (default: 30)",
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Optional random seed for deterministic animation",
+    )
+    parser.add_argument(
+        "--music-volume",
+        type=float,
+        default=0.4,
+        help="Music bed volume (default: 0.4)",
+    )
+    args = parser.parse_args()
+
+    assets_root = resolve_assets_root()
+    default_output = assets_root / "bumpers" / "network" / "network_brand.mp4"
+    output_path = Path(args.output) if args.output else default_output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    logo_path = args.logo
+    if logo_path:
+        logo_path = Path(logo_path)
+    else:
+        svg_candidate = assets_root / LOGO_SVG_PATH
+        png_candidate = assets_root / LOGO_PNG_PATH
+        logo_path = svg_candidate if svg_candidate.exists() else png_candidate
+
+    if not logo_path.exists():
+        print(f"[Network] Logo not found at {logo_path}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"[Network] Rendering bumper -> {output_path}")
+    try:
+        render_network_brand_bumper(
+            output_path=str(output_path),
+            width=1600,
+            height=900,
+            duration_sec=args.duration,
+            fps=args.fps,
+            logo_svg_path=str(logo_path),
+            seed=args.seed,
+            music_volume=args.music_volume,
+        )
+        size_mb = output_path.stat().st_size / (1024 * 1024)
+        print(f"[Network] ✓ Completed: {output_path} ({size_mb:.1f} MB)")
+    except Exception as exc:
+        print(f"[Network] ✗ Failed to render bumper: {exc}", file=sys.stderr)
+        raise
+
+
 __all__ = ["render_network_brand_bumper"]
+
+
+if __name__ == "__main__":
+    main()

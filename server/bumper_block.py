@@ -22,7 +22,29 @@ LOGGER = logging.getLogger(__name__)
 BUMPER_BLOCK_MARKER = "BUMPER_BLOCK"
 
 # Directory for pre-generated bumper blocks
-BLOCKS_DIR = os.path.join(os.environ.get("HBN_BUMPERS_ROOT", "/media/tvchannel/bumpers"), "blocks")
+def _resolve_blocks_dir() -> str:
+    """Resolve the blocks directory path, handling both Docker and baremetal."""
+    override = os.environ.get("HBN_BUMPERS_ROOT")
+    if override:
+        return os.path.join(override, "blocks")
+    
+    # Check if running in Docker
+    if Path("/app").exists():
+        # Docker: use media volume
+        media_bumpers = "/media/tvchannel/bumpers"
+        if os.path.exists("/media/tvchannel") or os.path.exists(media_bumpers):
+            return os.path.join(media_bumpers, "blocks")
+    
+    # Baremetal: use assets directory
+    try:
+        from server.generate_playlist import ASSETS_ROOT
+        return os.path.join(ASSETS_ROOT, "bumpers", "blocks")
+    except ImportError:
+        # Fallback to relative path
+        repo_root = Path(__file__).resolve().parent.parent
+        return str(repo_root / "assets" / "bumpers" / "blocks")
+
+BLOCKS_DIR = _resolve_blocks_dir()
 DEFAULT_BUMPER_DURATION = 6.0
 
 
@@ -32,6 +54,7 @@ class BumperBlock:
     bumpers: List[str]  # List of bumper file paths
     music_track: Optional[str]  # Path to the shared music track
     block_id: str  # Unique identifier for this block
+    episode_path: Optional[str] = None  # Episode this block is for (for preview/retrieval)
 
 
 class BumperBlockGenerator:
@@ -43,15 +66,78 @@ class BumperBlockGenerator:
         self._pregen_thread: Optional[threading.Thread] = None
         self._stop_pregen = threading.Event()
         self._blocks_dir = Path(BLOCKS_DIR)
-        self._blocks_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self._blocks_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            LOGGER.warning("Failed to create blocks directory %s: %s. Blocks will be stored in memory only.", self._blocks_dir, e)
+            # Continue without persistent storage - blocks will only be in memory
         # Cache for pre-generated blocks, keyed by spec hash
         self._pregenerated_blocks: Dict[str, BumperBlock] = {}
+        # Index of pre-generated blocks by episode path for quick lookup
+        self._blocks_by_episode: Dict[str, BumperBlock] = {}
     
     def _spec_hash(self, up_next_bumper: Optional[str], sassy_card: Optional[str], 
                    network_bumper: Optional[str], weather_bumper: Optional[str]) -> str:
         """Generate a hash for a block specification."""
         spec_str = f"{up_next_bumper}|{sassy_card}|{network_bumper}|{weather_bumper}"
         return hashlib.md5(spec_str.encode()).hexdigest()
+    
+    def peek_next_pregenerated_block(self, episode_path: Optional[str] = None) -> Optional[BumperBlock]:
+        """Peek at the next pre-generated block without removing it (for preview).
+        
+        If episode_path is provided, returns the block for that episode.
+        Otherwise, returns the first available block (FIFO).
+        """
+        with self._pregen_lock:
+            if episode_path and episode_path in self._blocks_by_episode:
+                return self._blocks_by_episode[episode_path]
+            
+            # Return first available block (FIFO)
+            if self._pregenerated_blocks:
+                first_hash = next(iter(self._pregenerated_blocks.keys()))
+                return self._pregenerated_blocks[first_hash]
+        
+        return None
+    
+    def get_next_pregenerated_block(self, episode_path: Optional[str] = None) -> Optional[BumperBlock]:
+        """Get the next pre-generated block, optionally matching a specific episode.
+        
+        Removes the block from cache. Use peek_next_pregenerated_block() for preview.
+        
+        If episode_path is provided, returns the block for that episode.
+        Otherwise, returns the first available block (FIFO).
+        """
+        with self._pregen_lock:
+            if episode_path and episode_path in self._blocks_by_episode:
+                block = self._blocks_by_episode.pop(episode_path)
+                # Also remove from main cache
+                for spec_hash, cached_block in list(self._pregenerated_blocks.items()):
+                    if cached_block == block:
+                        del self._pregenerated_blocks[spec_hash]
+                        break
+                LOGGER.info(
+                    "Retrieved pre-generated block for episode %s (bumpers: %d, remaining: %d)",
+                    Path(episode_path).name if episode_path else "unknown",
+                    len(block.bumpers) if block else 0,
+                    len(self._pregenerated_blocks),
+                )
+                return block
+            
+            # Return first available block (FIFO)
+            if self._pregenerated_blocks:
+                first_hash = next(iter(self._pregenerated_blocks.keys()))
+                block = self._pregenerated_blocks.pop(first_hash)
+                # Remove from episode index if present
+                if block.episode_path and block.episode_path in self._blocks_by_episode:
+                    del self._blocks_by_episode[block.episode_path]
+                LOGGER.info(
+                    "Retrieved first available pre-generated block (bumpers: %d, remaining: %d)",
+                    len(block.bumpers) if block else 0,
+                    len(self._pregenerated_blocks),
+                )
+                return block
+        
+        return None
     
     def get_pregenerated_block(
         self,
@@ -272,10 +358,14 @@ class BumperBlockGenerator:
         
         # Add music to each bumper in the block (or use originals if skipping music)
         block_bumpers = []
+        original_bumpers_to_cleanup = []  # Track original bumpers for cleanup
         cumulative_offset = 0.0
         for bumper_path, duration in bumper_entries:
             if skip_music or not music_track:
                 block_bumpers.append(bumper_path)
+                # Track for cleanup if it's a generated up-next bumper
+                if "/bumpers/up_next/" in bumper_path:
+                    original_bumpers_to_cleanup.append(bumper_path)
             else:
                 bumper_name = Path(bumper_path).stem
                 output_path = self._blocks_dir / f"{block_id}_{bumper_name}.mp4"
@@ -292,24 +382,37 @@ class BumperBlockGenerator:
                     )
                     if os.path.exists(output_path):
                         block_bumpers.append(str(output_path))
+                        # Track original bumper for cleanup if it's a generated up-next bumper
+                        if "/bumpers/up_next/" in bumper_path:
+                            original_bumpers_to_cleanup.append(bumper_path)
                     else:
                         # Fallback: use original
                         block_bumpers.append(bumper_path)
+                        if "/bumpers/up_next/" in bumper_path:
+                            original_bumpers_to_cleanup.append(bumper_path)
                 except Exception as e:
                     LOGGER.error(f"Failed to add music to bumper {bumper_path}: {e}")
                     # Fallback: use original bumper
                     if os.path.exists(bumper_path):
                         block_bumpers.append(bumper_path)
+                        if "/bumpers/up_next/" in bumper_path:
+                            original_bumpers_to_cleanup.append(bumper_path)
             cumulative_offset += duration
         
         if not block_bumpers:
             return None
         
-        return BumperBlock(
+        # Store cleanup info in the block
+        block = BumperBlock(
             bumpers=block_bumpers,
             music_track=music_track,
             block_id=block_id
         )
+        
+        # Attach cleanup list to block (using a private attribute)
+        block._cleanup_bumpers = original_bumpers_to_cleanup
+        
+        return block
     
     def _pick_music_track(self) -> Optional[str]:
         """Pick a random music track from assets/music/."""
@@ -420,7 +523,7 @@ class BumperBlockGenerator:
         self._stop_pregen.clear()
         self._pregen_thread = threading.Thread(
             target=self._pregen_worker,
-            daemon=True,
+            daemon=False,  # Keep thread alive even if main thread exits
             name="BumperBlockPregen"
         )
         self._pregen_thread.start()
@@ -460,12 +563,20 @@ class BumperBlockGenerator:
                             block_spec.get("network_bumper"),
                             block_spec.get("weather_bumper"),
                         )
+                        # Store episode_path if provided
+                        episode_path = block_spec.get("episode_path")
+                        if episode_path:
+                            block.episode_path = episode_path
+                        
                         with self._pregen_lock:
                             self._pregenerated_blocks[spec_hash] = block
+                            if episode_path:
+                                self._blocks_by_episode[episode_path] = block
                             cache_size = len(self._pregenerated_blocks)
                         LOGGER.info(
-                            "Pre-generation worker: Successfully generated and cached block %s (cache size: %d, bumpers: %d)",
+                            "Pre-generation worker: Successfully generated and cached block %s for episode %s (cache size: %d, bumpers: %d)",
                             spec_hash[:8],
+                            Path(episode_path).name if episode_path else "unknown",
                             cache_size,
                             len(block.bumpers) if block else 0,
                         )

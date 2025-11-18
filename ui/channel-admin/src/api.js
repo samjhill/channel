@@ -1,4 +1,4 @@
-const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
+export const API_BASE = (import.meta.env.VITE_API_BASE || "").replace(/\/$/, "");
 async function handleResponse(res) {
     if (!res.ok) {
         const detail = await res
@@ -76,5 +76,18 @@ export async function updateWeatherConfig(config) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(config)
     });
+    return handleResponse(res);
+}
+export async function fetchBumperPreview() {
+    const cacheBust = Date.now();
+    const res = await fetchWithTimeout(`${API_BASE}/api/bumper-preview/next?ts=${cacheBust}`);
+    return handleResponse(res);
+}
+export async function fetchLogs(container = "tvchannel", lines = 500) {
+    const params = new URLSearchParams({
+        container,
+        lines: lines.toString(),
+    });
+    const res = await fetchWithTimeout(`${API_BASE}/api/logs?${params}`);
     return handleResponse(res);
 }

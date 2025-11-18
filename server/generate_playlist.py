@@ -178,6 +178,42 @@ def find_existing_bumper(
     generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
     if os.path.exists(generic_bumper_path) and _validate_bumper_file(generic_bumper_path):
         return generic_bumper_path
+    
+    # If exact match fails, try fuzzy matching: extract just the show name
+    # (strip out release group, quality, year, etc.)
+    # For example: "Batman The Animated Series 1991 S01 Bluray..." -> "Batman The Animated Series"
+    import re
+    # Try to extract just the show name by removing common patterns
+    simplified_title = show_title
+    # Remove year patterns (e.g., "1991", "2023")
+    simplified_title = re.sub(r'\s+\d{4}\s+', ' ', simplified_title, flags=re.IGNORECASE)
+    # Remove quality/format patterns (e.g., "1080p", "Bluray", "x265", etc.)
+    quality_patterns = [
+        r'\b(bluray|blu-ray|dvd|webdl|web-dl|hdtv|bdrip|dvdrip)\b',
+        r'\b(1080p|720p|480p|2160p|4k)\b',
+        r'\b(x264|x265|h264|h265|hevc|avc)\b',
+        r'\b(eac3|ac3|aac|dts|mp3)\b',
+        r'\b(2\.0|5\.1|7\.1)\b',
+        r'\b(s01|s02|season\s*\d+)\b',  # Season info
+        r'\b(i\w+|\d+)\b',  # Release group names (single word or number)
+    ]
+    for pattern in quality_patterns:
+        simplified_title = re.sub(pattern, '', simplified_title, flags=re.IGNORECASE)
+    # Clean up extra spaces
+    simplified_title = ' '.join(simplified_title.split())
+    # Take first 3-4 words as the show name (usually enough to identify the show)
+    words = simplified_title.split()
+    if len(words) > 4:
+        simplified_title = ' '.join(words[:4])
+    
+    if simplified_title and simplified_title.lower() != base_name.lower():
+        simplified_base = safe_filename(simplified_title)
+        # Try simplified generic bumper
+        simplified_filename = f"{simplified_base}.mp4"
+        simplified_bumper_path = os.path.join(BUMPERS_DIR, simplified_filename)
+        if os.path.exists(simplified_bumper_path) and _validate_bumper_file(simplified_bumper_path):
+            LOGGER.debug("Found bumper using simplified show name: %s -> %s", show_title, simplified_title)
+            return simplified_bumper_path
 
     return None
 
@@ -218,6 +254,7 @@ def ensure_bumper(
     """
     Ensure a bumper exists for the given show/episode.
     Returns the path to an existing bumper, or creates and returns a new one.
+    Uses fast renderer with pre-generated backgrounds for efficiency.
     """
     os.makedirs(BUMPERS_DIR, exist_ok=True)
 
@@ -228,50 +265,128 @@ def ensure_bumper(
 
     base_name = safe_filename(show_title)
 
-    # First, ensure generic bumper exists (without episode info)
-    generic_filename = f"{base_name}.mp4"
-    generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
-    if not os.path.exists(generic_bumper_path):
-        LOGGER.info("Rendering generic 'Up Next' bumper for %r", show_title)
-        render_up_next_bumper(
-            show_title=show_title,
-            output_path=generic_bumper_path,
-            logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
-            episode_label=None,  # Generic bumper has no episode label
-        )
-
-    # If episode metadata is provided, try to create/use specific bumper
-    episode_code = format_episode_code(episode_metadata)
-    if episode_code:
-        specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
-        specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
-        if not os.path.exists(specific_bumper_path):
-            # Only create specific bumper if generic exists
-            if os.path.exists(generic_bumper_path):
-                LOGGER.info(
-                    "Rendering specific 'Up Next' bumper for %r - %s",
-                    show_title,
-                    episode_code,
-                )
-                render_up_next_bumper(
+    # Try fast renderer first (uses pre-generated backgrounds)
+    # But only if backgrounds exist, otherwise skip directly to full render
+    try:
+        from scripts.bumpers.render_up_next_fast import render_up_next_bumper_fast, get_up_next_background_path
+        
+        # Check if backgrounds exist before trying fast render
+        bg_available = get_up_next_background_path() is not None
+        
+        if bg_available:
+            import random
+            
+            # Pick a random background for variety
+            background_id = random.randint(0, 4)  # Use backgrounds 0-4
+            
+            # First, ensure generic bumper exists (without episode info)
+            generic_filename = f"{base_name}.mp4"
+            generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
+            if not os.path.exists(generic_bumper_path):
+                LOGGER.info("Rendering generic 'Up Next' bumper for %r (fast)", show_title)
+                success = render_up_next_bumper_fast(
                     show_title=show_title,
-                    output_path=specific_bumper_path,
-                    logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
-                    episode_label=format_episode_label(episode_metadata),
+                    output_path=generic_bumper_path,
+                    episode_label=None,
+                    background_id=background_id,
                 )
-            else:
-                # Generic doesn't exist yet (shouldn't happen, but fallback)
-                LOGGER.warning(
-                    "Generic bumper not found, using generic for %r", show_title
-                )
-                return generic_bumper_path
+                if not success:
+                    raise RuntimeError("Fast render failed")
+        else:
+            # No backgrounds available, skip fast render and go straight to fallback
+            LOGGER.debug("No up-next backgrounds available, skipping fast render")
+            raise ImportError("Backgrounds not available")
+        
+        # If episode metadata is provided, try to create/use specific bumper
+        episode_code = format_episode_code(episode_metadata)
+        if episode_code:
+            specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
+            specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
+            if not os.path.exists(specific_bumper_path):
+                # Only create specific bumper if generic exists
+                if os.path.exists(generic_bumper_path) and bg_available:
+                    LOGGER.info(
+                        "Rendering specific 'Up Next' bumper for %r - %s (fast)",
+                        show_title,
+                        episode_code,
+                    )
+                    # Use a different background for variety
+                    background_id = (background_id + 1) % 5
+                    success = render_up_next_bumper_fast(
+                        show_title=show_title,
+                        output_path=specific_bumper_path,
+                        episode_label=format_episode_label(episode_metadata),
+                        background_id=background_id,
+                    )
+                    if not success:
+                        raise RuntimeError("Fast render failed")
+                elif not bg_available:
+                    # Backgrounds not available, skip specific bumper generation
+                    LOGGER.debug("No backgrounds available, skipping specific bumper")
+                    return generic_bumper_path
+                else:
+                    # Generic doesn't exist yet (shouldn't happen, but fallback)
+                    LOGGER.warning(
+                        "Generic bumper not found, using generic for %r", show_title
+                    )
+                    return generic_bumper_path
 
-        # Return specific bumper if it exists, otherwise generic
-        if os.path.exists(specific_bumper_path):
-            return specific_bumper_path
+            # Return specific bumper if it exists, otherwise generic
+            if os.path.exists(specific_bumper_path):
+                return specific_bumper_path
+        
+        # Return generic bumper (either no episode metadata, or specific doesn't exist)
+        return generic_bumper_path
+    
+    except Exception as e:
+        # Fallback to full renderer if fast render fails
+        LOGGER.warning("Fast render failed, falling back to full render: %s", e)
+        from scripts.bumpers.render_up_next import render_up_next_bumper
+        
+        # First, ensure generic bumper exists (without episode info)
+        generic_filename = f"{base_name}.mp4"
+        generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
+        if not os.path.exists(generic_bumper_path):
+            LOGGER.info("Rendering generic 'Up Next' bumper for %r", show_title)
+            render_up_next_bumper(
+                show_title=show_title,
+                output_path=generic_bumper_path,
+                logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
+                episode_label=None,  # Generic bumper has no episode label
+            )
 
-    # Return generic bumper (either no episode metadata, or specific doesn't exist)
-    return generic_bumper_path
+        # If episode metadata is provided, try to create/use specific bumper
+        episode_code = format_episode_code(episode_metadata)
+        if episode_code:
+            specific_filename = f"{base_name}_{safe_filename(episode_code)}.mp4"
+            specific_bumper_path = os.path.join(BUMPERS_DIR, specific_filename)
+            if not os.path.exists(specific_bumper_path):
+                # Only create specific bumper if generic exists
+                if os.path.exists(generic_bumper_path):
+                    LOGGER.info(
+                        "Rendering specific 'Up Next' bumper for %r - %s",
+                        show_title,
+                        episode_code,
+                    )
+                    render_up_next_bumper(
+                        show_title=show_title,
+                        output_path=specific_bumper_path,
+                        logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
+                        episode_label=format_episode_label(episode_metadata),
+                    )
+                else:
+                    # Generic doesn't exist yet (shouldn't happen, but fallback)
+                    LOGGER.warning(
+                        "Generic bumper not found, using generic for %r", show_title
+                    )
+                    return generic_bumper_path
+
+            # Return specific bumper if it exists, otherwise generic
+            if os.path.exists(specific_bumper_path):
+                return specific_bumper_path
+
+        # Return generic bumper (either no episode metadata, or specific doesn't exist)
+        return generic_bumper_path
 
 
 def resolve_assets_root() -> str:
@@ -727,28 +842,45 @@ def schedule_weighted_random(
 
 
 def collect_needed_bumpers(
-    slots: Sequence[EpisodeSlot], seed_threshold: int
+    slots: Sequence[EpisodeSlot], seed_threshold: int, max_blocks_ahead: int = 3
 ) -> List[Tuple[str, Optional[Dict[str, Optional[int]]]]]:
     """
-    Collect all bumpers that need to be generated.
-    Returns a list of (show_title, episode_metadata) tuples.
-    Prioritizes generic bumpers (no episode metadata) before specific ones.
+    Collect bumpers that need to be generated for the next few bumper blocks only.
+    This limits storage usage by only generating what's needed soon.
+    
+    Args:
+        slots: Episode slots to check
+        seed_threshold: Number of seed episodes to skip
+        max_blocks_ahead: Maximum number of bumper blocks to generate ahead (default: 3)
+    
+    Returns:
+        List of (show_title, episode_metadata) tuples for bumpers to generate.
     """
     needed: List[Tuple[str, Optional[Dict[str, Optional[int]]]]] = []
     seen = set()  # Track unique bumper requests to avoid duplicates
     generic_bumpers = {}  # Track which shows need generic bumpers
     specific_bumpers: List[Tuple[str, Optional[Dict[str, Optional[int]]]]] = []
 
+    # Count bumper blocks to limit generation
+    bumper_block_count = 0
+    max_bumpers_to_collect = max_blocks_ahead * 2  # Rough estimate: ~2 bumpers per block
+
     for idx, slot in enumerate(slots):
         # Only collect bumpers for post-seed episodes
         if idx < seed_threshold:
             continue
+
+        # Limit to next few bumper blocks
+        if bumper_block_count >= max_blocks_ahead:
+            break
 
         metadata = extract_episode_metadata(slot.episode_path)
 
         # Check if bumper already exists
         existing = find_existing_bumper(slot.show_label, metadata)
         if existing:
+            # Still count this as a bumper block even if bumper exists
+            bumper_block_count += 1
             continue
 
         episode_code = format_episode_code(metadata) if metadata else None
@@ -767,6 +899,13 @@ def collect_needed_bumpers(
             if key not in seen:
                 seen.add(key)
                 generic_bumpers[slot.show_label] = None
+        
+        # Count bumper blocks (each episode after seed threshold represents a potential block)
+        bumper_block_count += 1
+        
+        # Stop if we've collected enough
+        if len(needed) + len(generic_bumpers) + len(specific_bumpers) >= max_bumpers_to_collect:
+            break
 
     # First add all generic bumpers, then specific ones
     needed.extend([(show, None) for show in generic_bumpers.keys()])
@@ -956,16 +1095,18 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                 except Exception:
                     pass
                 
-                # Queue for pre-generation
+                # Queue for pre-generation with episode path
                 block_generator = get_generator()
+                next_episode = rotated_slots[idx + 1].episode_path if idx + 1 < len(rotated_slots) else None
                 block_generator.queue_pregen({
                     "up_next_bumper": up_next,
                     "sassy_card": sassy,
                     "network_bumper": None,
                     "weather_bumper": weather,
+                    "episode_path": next_episode,  # Store which episode this block is for
                 })
                 
-                # Write bumper block marker - the streamer will generate the block
+                # Write bumper block marker - the streamer will use the pre-generated block
                 handle.write(BUMPER_BLOCK_MARKER + "\n")
 
 

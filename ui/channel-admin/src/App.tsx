@@ -13,6 +13,8 @@ import ShowDiscovery from "./components/ShowDiscovery";
 import ShowTable from "./components/ShowTable";
 import PlaylistManager from "./components/PlaylistManager";
 import BumperManager from "./components/BumperManager";
+import BumperPreview from "./components/BumperPreview";
+import LogMonitor from "./components/LogMonitor";
 import SaveBar from "./components/SaveBar";
 
 function cloneChannel(channel: ChannelConfig | null): ChannelConfig | null {
@@ -29,7 +31,7 @@ function App() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [activeView, setActiveView] = useState<"settings" | "playlist" | "bumpers">("playlist");
+  const [activeView, setActiveView] = useState<"settings" | "playlist" | "bumpers" | "preview" | "logs">("playlist");
 
   useEffect(() => {
     fetchChannels()
@@ -231,6 +233,18 @@ function App() {
           >
             Bumper Management
           </button>
+          <button
+            className={`tab-button ${activeView === "preview" ? "active" : ""}`}
+            onClick={() => setActiveView("preview")}
+          >
+            Bumper Preview
+          </button>
+          <button
+            className={`tab-button ${activeView === "logs" ? "active" : ""}`}
+            onClick={() => setActiveView("logs")}
+          >
+            Log Monitor
+          </button>
         </div>
       </header>
       <main className="app-content">
@@ -281,7 +295,13 @@ function App() {
         {!loading && activeView === "bumpers" && (
           <BumperManager />
         )}
-        {!loading && !currentChannel && activeView !== "bumpers" && (
+        {!loading && activeView === "preview" && (
+          <BumperPreview />
+        )}
+        {!loading && activeView === "logs" && (
+          <LogMonitor />
+        )}
+        {!loading && !currentChannel && activeView !== "bumpers" && activeView !== "logs" && (
           <div className="card">Select a channel to manage its settings.</div>
         )}
       </main>
