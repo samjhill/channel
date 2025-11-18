@@ -276,7 +276,8 @@
                   
                   // Check if segments stopped updating (indicates FFmpeg restart)
                   // But only if we haven't recently reloaded the manifest and buffer is good
-                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 2000 && now - lastManifestReload > manifestReloadCooldown && !recoveryInProgress) {
+                  // Reduced aggressiveness to prevent MediaSource from closing
+                  if (fragments.length === lastSegmentCount && now - lastManifestCheck > 5000 && now - lastManifestReload > manifestReloadCooldown && !recoveryInProgress) {
                     // Check buffer before forcing reload
                     const buffered = video.buffered;
                     let bufferRemaining = 0;
@@ -290,13 +291,13 @@
                       }
                     }
                     
-                    // Only force reload if buffer is good (> 5 seconds)
-                    if (bufferRemaining > 5) {
-                      // Segments haven't changed in 2+ seconds - might be a restart
+                    // Only force reload if buffer is good (> 10 seconds) and segments haven't updated for longer
+                    if (bufferRemaining > 10) {
+                      // Segments haven't changed in 5+ seconds - might be a restart
                       consecutiveStaleManifests++;
-                      if (consecutiveStaleManifests >= 3) {
+                      if (consecutiveStaleManifests >= 5) {
                         // Force a manifest reload, but only if we haven't reloaded recently
-                        console.log('⚠️ No segment updates detected for 6+ seconds, forcing manifest reload...');
+                        console.log('⚠️ No segment updates detected for 25+ seconds, forcing manifest reload...');
                         hls.startLoad();
                         lastManifestReload = now;
                         consecutiveStaleManifests = 0;
@@ -431,12 +432,18 @@
         
         // Force periodic manifest reloads to catch skips faster
         // This ensures we detect when FFmpeg restarts with a new file
-        // But be less aggressive to avoid buffer stalls
+        // But be less aggressive to avoid MediaSource closing
         // Don't reload if we're in recovery or buffer is low
         const forceManifestReload = setInterval(() => {
           try {
             // Don't reload manifest if we're recovering from a buffer stall
             if (recoveryInProgress) {
+              return;
+            }
+            
+            // Check MediaSource state - don't reload if it's ending/ended
+            if (video.srcObject && video.srcObject.readyState === 'ended') {
+              console.log('⚠️ MediaSource is ended, skipping manifest reload');
               return;
             }
             
@@ -453,22 +460,22 @@
               }
             }
             
-            // Don't reload if buffer is low (< 5 seconds) - let it build up
-            if (bufferRemaining < 5) {
+            // Don't reload if buffer is low (< 10 seconds) - let it build up
+            if (bufferRemaining < 10) {
               return;
             }
             
             const now = Date.now();
-            // Only reload if enough time has passed since last reload
-            if (now - lastManifestReload > 10000) {
-              // Reload manifest every 10 seconds (increased from 5s to avoid buffer issues)
+            // Only reload if enough time has passed since last reload (increased to 20s)
+            if (now - lastManifestReload > 20000) {
+              // Reload manifest every 20 seconds (increased to prevent MediaSource issues)
               hls.startLoad();
               lastManifestReload = now;
             }
           } catch (e) {
             // Ignore errors
           }
-        }, 10000); // Check every 10 seconds, but only reload if cooldown passed and buffer is good
+        }, 20000); // Check every 20 seconds, but only reload if cooldown passed and buffer is good
         
         // Handle fragment loading - seek to live edge when new fragments are available after discontinuity
         // But only if we have sufficient buffer
@@ -573,13 +580,35 @@
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
                 console.log('Fatal media error encountered, try to recover');
-                hls.recoverMediaError();
+                // Check if MediaSource is ended - if so, recreate it
+                if (video.srcObject && video.srcObject.readyState === 'ended') {
+                  console.log('MediaSource ended, recreating...');
+                  hls.destroy();
+                  setTimeout(() => {
+                    const newHls = new Hls(hlsConfig);
+                    newHls.loadSource(streamUrl);
+                    newHls.attachMedia(video);
+                    // Re-attach all event handlers would be needed here, but for now just recreate
+                    window.location.reload(); // Simple recovery: reload page
+                  }, 1000);
+                } else {
+                  hls.recoverMediaError();
+                }
                 break;
               default:
                 console.log('Fatal error, destroying');
                 hls.destroy();
                 break;
             }
+          } else if (data.type === 'mediaError' && (data.details === 'bufferAppendError' || data.details === 'bufferAppendingError')) {
+            // Handle buffer append errors - these can happen when MediaSource is ending
+            if (video.srcObject && video.srcObject.readyState === 'ended') {
+              console.log('⚠️ Buffer append error: MediaSource ended, will recover on next fatal error');
+              // Don't try to recover here - let the fatal error handler deal with it
+              return;
+            }
+            // Non-fatal buffer append error - log but don't recover aggressively
+            console.log('⚠️ Buffer append error (non-fatal):', data.details);
           } else if (data.type === 'mediaError' && data.details === 'bufferStalledError') {
             // Non-fatal buffer stall - try to recover with debouncing
             const now = Date.now();
