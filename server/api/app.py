@@ -1360,16 +1360,33 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
         try:
             if found_marker:
                 # Found a marker, use _find_next_bumper_block starting from that marker
+                # This has its own timeout protection
                 info = _find_next_bumper_block(entries, bumper_block_idx)
             else:
-                # No marker found, resolve block directly for this episode
-                # Import resolve_bumper_block from stream
-                from server.stream import resolve_bumper_block
+                # No marker found, try to use pre-generated block first
+                from server.bumper_block import get_generator
+                generator = get_generator()
                 
-                LOGGER.info("Preview: No bumper block marker found before episode, resolving block directly")
-                block = resolve_bumper_block(next_episode_idx, entries)
-                if not block or not block.bumpers:
-                    raise ValueError(f"Failed to resolve bumper block for episode at index {next_episode_idx}")
+                # Try to get pre-generated block for this episode
+                peeked_block = generator.peek_next_pregenerated_block(episode_path=next_episode_path)
+                if not peeked_block:
+                    # Try any available pre-generated block
+                    peeked_block = generator.peek_next_pregenerated_block(episode_path=None)
+                
+                if peeked_block and peeked_block.bumpers:
+                    # Use pre-generated block (copy so we don't modify cache)
+                    import copy
+                    block = copy.deepcopy(peeked_block)
+                    LOGGER.info("Preview: Using pre-generated block for episode %s", Path(next_episode_path).name)
+                else:
+                    # No pre-generated block, try to resolve (with timeout)
+                    from server.stream import resolve_bumper_block
+                    
+                    LOGGER.info("Preview: No pre-generated block found, resolving block directly (may take time)")
+                    # Use a shorter timeout for preview - if it takes too long, fail gracefully
+                    block = resolve_bumper_block(next_episode_idx, entries)
+                    if not block or not block.bumpers:
+                        raise ValueError(f"Failed to resolve bumper block for episode at index {next_episode_idx}")
                 
                 info = {
                     "block": block,
@@ -1389,16 +1406,16 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
     thread = threading.Thread(target=find_block, daemon=True)
     thread.start()
     
-    # Wait for result with timeout (30 seconds total)
+    # Wait for result with timeout (20 seconds - shorter for preview)
     try:
-        result_type, result_value = result_queue.get(timeout=30.0)
+        result_type, result_value = result_queue.get(timeout=20.0)
         if result_type == 'success':
             info = result_value
         else:
             raise result_value
     except queue.Empty:
-        LOGGER.error("Preview: Bumper block finding timed out after 30s")
-        raise RuntimeError("Preview generation timed out - bumper block resolution took too long")
+        LOGGER.error("Preview: Bumper block finding timed out after 20s")
+        raise RuntimeError("Preview generation timed out - bumper block resolution took too long. Try again later when blocks are pre-generated.")
     
     block = info["block"]
     

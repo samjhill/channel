@@ -147,7 +147,6 @@ def render_up_next_bumper_fast(
             f"fontcolor=0xF8F5E9:"
             f"x=(w-text_w)/2:"
             f"y={title_y}:"
-            f"text_w={max_title_width}:"  # Enable wrapping at max width
             f"box=0:boxborderw=0"
         )
         
