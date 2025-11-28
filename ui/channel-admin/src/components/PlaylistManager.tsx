@@ -6,6 +6,7 @@ import {
   skipCurrentEpisode,
   updateUpcomingPlaylist
 } from "../api";
+import PlaylistGenerationStatus from "./PlaylistGenerationStatus";
 
 interface PlaylistManagerProps {
   channelId: string;
@@ -205,8 +206,10 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
   }, [snapshot]);
 
   return (
-    <section className="card playlist-manager">
-      <header className="playlist-header">
+    <>
+      <PlaylistGenerationStatus />
+      <section className="card playlist-manager">
+        <header className="playlist-header">
         <div>
           <h2>Playlist Management</h2>
           <p className="muted">
@@ -334,7 +337,8 @@ function PlaylistManager({ channelId, active }: PlaylistManagerProps) {
           </div>
         </>
       )}
-    </section>
+      </section>
+    </>
   );
 }
 

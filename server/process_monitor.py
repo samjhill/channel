@@ -11,6 +11,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Dict, Optional
@@ -65,6 +66,32 @@ def signal_handler(signum, frame):
     shutdown_requested = True
 
 
+def read_process_output(process: subprocess.Popen, name: str) -> None:
+    """Read stdout/stderr from a process in a background thread to prevent blocking."""
+    if not process.stdout:
+        return
+    
+    try:
+        # Read line by line to prevent blocking
+        for line in iter(process.stdout.readline, ''):
+            if not line:
+                break
+            # Log progress messages at INFO level, others at DEBUG
+            line = line.rstrip()
+            if line.startswith('[Progress]') or line.startswith('[Bumpers]') or line.startswith('[Playlist]'):
+                LOGGER.info("%s: %s", name, line)
+            else:
+                LOGGER.debug("%s: %s", name, line)
+    except Exception as e:
+        LOGGER.debug("Error reading output from %s: %s", name, e)
+    finally:
+        if process.stdout:
+            try:
+                process.stdout.close()
+            except Exception:
+                pass
+
+
 def start_process(name: str, config: Dict) -> Optional[subprocess.Popen]:
     """Start a process and return the Popen object."""
     try:
@@ -79,6 +106,16 @@ def start_process(name: str, config: Dict) -> Optional[subprocess.Popen]:
         config["process"] = process
         config["last_restart"] = time.time()
         LOGGER.info("%s started with PID %d", name, process.pid)
+        
+        # Start a background thread to read stdout/stderr to prevent blocking
+        output_thread = threading.Thread(
+            target=read_process_output,
+            args=(process, name),
+            daemon=True,
+            name=f"{name}-output-reader"
+        )
+        output_thread.start()
+        
         return process
     except Exception as e:
         LOGGER.error("Failed to start %s: %s", name, e)
@@ -109,13 +146,9 @@ def monitor_process(name: str, config: Dict) -> None:
             returncode,
         )
         
-        # Read any remaining output
-        try:
-            output = process.stdout.read() if process.stdout else ""
-            if output:
-                LOGGER.debug("%s output: %s", name, output[:500])  # Log first 500 chars
-        except Exception:
-            pass
+        # Output is already being read by background thread, no need to read here
+        # Just wait a moment for the thread to finish reading any remaining output
+        time.sleep(0.5)
         
         # Calculate backoff delay
         config["restart_count"] += 1

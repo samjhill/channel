@@ -248,3 +248,22 @@ export async function fetchLogs(
   return handleResponse<LogResponse>(res);
 }
 
+export interface PlaylistGenerationStatus {
+  is_generating: boolean;
+  playlist_exists: boolean;
+  playlist_entries: number;
+  playlist_size: number;
+  process_info: {
+    pid?: number;
+    cpu_percent?: number;
+    memory_mb?: number;
+    runtime?: string;
+  } | null;
+  timestamp: number;
+}
+
+export async function fetchPlaylistGenerationStatus(): Promise<PlaylistGenerationStatus> {
+  const res = await fetchWithTimeout(`${API_BASE}/api/playlist/generation-status`);
+  return handleResponse<PlaylistGenerationStatus>(res);
+}
+

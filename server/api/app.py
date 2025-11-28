@@ -179,6 +179,77 @@ def health_check() -> Dict[str, Any]:
     return health_status
 
 
+@app.get("/api/playlist/generation-status")
+def get_playlist_generation_status() -> Dict[str, Any]:
+    """Get the status of playlist generation process."""
+    status = {
+        "is_generating": False,
+        "playlist_exists": False,
+        "playlist_entries": 0,
+        "playlist_size": 0,
+        "process_info": None,
+        "timestamp": time.time(),
+    }
+    
+    # Check if playlist file exists
+    try:
+        playlist_path = resolve_playlist_path()
+        if playlist_path.exists():
+            status["playlist_exists"] = True
+            status["playlist_size"] = playlist_path.stat().st_size
+            
+            # Count entries if file has content
+            if status["playlist_size"] > 0:
+                try:
+                    entries, _ = load_playlist_entries()
+                    status["playlist_entries"] = len(entries)
+                except Exception:
+                    # File might be empty or still being written
+                    pass
+    except Exception as e:
+        LOGGER.warning("Failed to check playlist file: %s", e)
+    
+    # Check if generate_playlist.py is running using pgrep
+    try:
+        result = subprocess.run(
+            ["pgrep", "-f", "generate_playlist.py"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if result.returncode == 0:
+            status["is_generating"] = True
+            pids = result.stdout.strip().split('\n')
+            if pids and pids[0]:
+                try:
+                    pid = int(pids[0])
+                    # Try to get process info using ps
+                    ps_result = subprocess.run(
+                        ["ps", "-p", str(pid), "-o", "pid,etime,pcpu,rss"],
+                        capture_output=True,
+                        text=True,
+                        timeout=1,
+                    )
+                    if ps_result.returncode == 0:
+                        lines = ps_result.stdout.strip().split('\n')
+                        if len(lines) > 1:
+                            parts = lines[1].split()
+                            if len(parts) >= 4:
+                                status["process_info"] = {
+                                    "pid": pid,
+                                    "cpu_percent": float(parts[2]) if parts[2] != '-' else 0.0,
+                                    "memory_mb": float(parts[3]) / 1024 if parts[3] != '-' else 0.0,
+                                    "runtime": parts[1] if parts[1] != '-' else "unknown",
+                                }
+                except (ValueError, IndexError, subprocess.TimeoutExpired):
+                    # If we can't parse ps output, just report that it's running
+                    status["process_info"] = {"pid": int(pids[0])}
+    except (FileNotFoundError, subprocess.TimeoutExpired, Exception) as e:
+        LOGGER.debug("Failed to check for generate_playlist process: %s", e)
+    
+    return status
+
+
 @app.get("/api/channels")
 def get_channels() -> List[Dict[str, Any]]:
     return list_channels()
@@ -1063,22 +1134,17 @@ def _generate_preview_video(bumpers: List[str]) -> Path:
 
 
 def _find_next_bumper_block(entries: List[str], start_index: int) -> Dict[str, Any]:
-    """Find the next bumper block, preferring pre-generated blocks."""
+    """Find the next bumper block using unified code paths from server.stream.
+    
+    Uses resolve_bumper_block which has timeout protection and unified logic.
+    """
     if not entries:
         raise ValueError("Playlist is empty")
     
-    # First, try to get a pre-generated block directly (peek, don't remove)
-    from server.bumper_block import get_generator
-    generator = get_generator()
-    
-    # Try to peek at the next pre-generated block without removing it
-    # But we'll still need to verify it matches the playlist, so skip this optimization
-    # and go straight to searching the playlist for the next bumper block
-    
-    # Fallback: search playlist for next bumper block marker
     total = len(entries)
     idx = start_index if 0 <= start_index < total else 0
     
+    # Search playlist for next bumper block marker
     for offset in range(total):
         current = (idx + offset) % total
         entry = entries[current].strip()
@@ -1101,157 +1167,125 @@ def _find_next_bumper_block(entries: List[str], start_index: int) -> Dict[str, A
         from pathlib import Path
         LOGGER.info("Preview: Found next episode at index %d: %s", next_episode_idx, Path(episode_path).name)
         
-        # Check if weather should be included using unified function
-        # (Weather is determined by probability when blocks are queued, not by playlist markers)
-        weather_bumper_marker = None
+        # For preview, peek at pre-generated block first (don't consume it)
+        # Then fall back to resolve_bumper_block if no pre-generated block exists
         try:
-            from server.stream import _should_include_weather
-            if _should_include_weather(episode_path):
-                weather_bumper_marker = "WEATHER_BUMPER"
-        except Exception as e:
-            LOGGER.debug("Failed to check weather config: %s", e)
-        
-        # Try to peek at pre-generated block first (for preview, don't remove)
-        # episode_path was already set above
-        LOGGER.info("Preview: Looking for bumper block for episode: %s (index %d)", Path(episode_path).name, next_episode_idx)
-        
-        block = generator.peek_next_pregenerated_block(episode_path=episode_path)
-        if not block:
-            # Fallback: try any available block
-            LOGGER.info("Preview: No block found for specific episode, trying any available block")
-            block = generator.peek_next_pregenerated_block(episode_path=None)
-        
-        # If we got a pre-generated block, ensure it has the correct up-next bumper for this episode
-        # Pre-generated blocks may have been created for a different episode
-        if block:
-            try:
-                from server.stream import _get_up_next_bumper
-                from server.generate_playlist import infer_show_title_from_path, extract_episode_metadata
-                from pathlib import Path
-                import copy
+            import threading
+            import queue
+            import copy
+            
+            from server.bumper_block import get_generator
+            from server.stream import _get_up_next_bumper
+            
+            generator = get_generator()
+            
+            # First try to peek at pre-generated block (for preview, don't consume)
+            peeked_block = generator.peek_next_pregenerated_block(episode_path=episode_path)
+            if not peeked_block:
+                # Fallback: try any available block
+                peeked_block = generator.peek_next_pregenerated_block(episode_path=None)
+            
+            if peeked_block:
+                # Use peeked block (copy so we don't modify cache)
+                block = copy.deepcopy(peeked_block)
                 
-                # Log what episode this block was created for
-                if block.episode_path:
-                    LOGGER.info("Preview: Found pre-generated block created for: %s", Path(block.episode_path).name)
-                else:
-                    LOGGER.info("Preview: Found pre-generated block (no episode_path stored)")
+                # Ensure correct up-next bumper (same logic as in stream.py)
+                # Wrap in timeout to prevent blocking on slow bumper generation
+                up_next_queue = queue.Queue(maxsize=1)
                 
-                # Log current episode info
-                show_label = infer_show_title_from_path(episode_path)
-                metadata = extract_episode_metadata(episode_path)
-                LOGGER.info("Preview: Current episode - Show: %s, Metadata: %s", show_label, metadata)
+                def get_up_next():
+                    try:
+                        correct_up_next = _get_up_next_bumper(episode_path)
+                        up_next_queue.put(('success', correct_up_next), timeout=1.0)
+                    except Exception as e:
+                        try:
+                            up_next_queue.put(('error', e), timeout=1.0)
+                        except queue.Full:
+                            pass
                 
-                # Create a copy so we don't modify the cached version (peek, not consume)
-                block = copy.deepcopy(block)
+                up_next_thread = threading.Thread(target=get_up_next, daemon=True)
+                up_next_thread.start()
                 
-                # Log existing bumpers in block
-                LOGGER.info("Preview: Block has %d bumpers: %s", len(block.bumpers), 
-                          [Path(b).name for b in block.bumpers])
-                
-                # Get the correct up-next bumper for this episode
-                correct_up_next = _get_up_next_bumper(episode_path)
-                LOGGER.info("Preview: Correct up-next bumper for this episode: %s", 
-                          Path(correct_up_next).name if correct_up_next else "None")
+                correct_up_next = None
+                try:
+                    result_type, result_value = up_next_queue.get(timeout=10.0)
+                    if result_type == 'success':
+                        correct_up_next = result_value
+                    else:
+                        LOGGER.warning("Preview: Failed to get up-next bumper: %s", result_value)
+                except queue.Empty:
+                    LOGGER.warning("Preview: Getting up-next bumper timed out after 10s, using existing bumper in block")
+                    # Use existing bumper if timeout
+                    correct_up_next = None
                 
                 if correct_up_next and block.bumpers:
-                    # Replace up-next bumper in the block with the correct one
-                    up_next_replaced = False
+                    # Replace up-next bumper if needed
                     for i, bumper_path in enumerate(block.bumpers):
-                        # Check if this is an up-next bumper (generic or JIT)
                         if "/bumpers/up_next/" in bumper_path or "/up_next_temp/" in bumper_path:
-                            old_bumper_name = Path(bumper_path).name
-                            new_bumper_name = Path(correct_up_next).name
-                            LOGGER.info("Preview: Found up-next bumper at index %d: %s", i, old_bumper_name)
-                            
                             if bumper_path != correct_up_next:
-                                LOGGER.info("Preview: REPLACING up-next bumper: %s -> %s", old_bumper_name, new_bumper_name)
+                                LOGGER.info("Preview: Replacing up-next bumper: %s -> %s", 
+                                          Path(bumper_path).name, Path(correct_up_next).name)
                                 block.bumpers[i] = correct_up_next
-                                up_next_replaced = True
-                            else:
-                                LOGGER.info("Preview: Up-next bumper already correct: %s", new_bumper_name)
-                                up_next_replaced = True
                             break
-                    
-                    if not up_next_replaced:
-                        LOGGER.warning("Preview: Could not find up-next bumper in preview block to replace. Block bumpers: %s",
-                                     [Path(b).name for b in block.bumpers])
-                    else:
-                        LOGGER.info("Preview: Final block bumpers after replacement: %s",
-                                   [Path(b).name for b in block.bumpers])
-            except Exception as e:
-                LOGGER.error("Preview: Failed to update up-next bumper in preview block: %s", e, exc_info=True)
-        
-        # If no pre-generated block available, generate on-the-fly for preview
-        # (API server runs in separate process, so doesn't share pre-generated blocks)
-        if not block:
-            try:
-                # Generate block with weather if weather marker was found
-                from server.stream import resolve_bumper_block, _render_weather_bumper_jit
                 
-                # Render weather bumper if needed (using unified weather check)
-                weather_bumper = None
-                if weather_bumper_marker:
+                return {
+                    "block": block,
+                    "block_index": current,
+                    "episode_index": next_episode_idx,
+                    "episode_path": episode_path,
+                }
+            
+            # No pre-generated block available, use resolve_bumper_block with timeout
+            # This will generate on-the-fly but has timeout protection
+            result_queue = queue.Queue(maxsize=1)
+            
+            def resolve_block():
+                try:
+                    block = resolve_bumper_block(next_episode_idx, entries)
+                    result_queue.put(('success', block), timeout=1.0)
+                except Exception as e:
                     try:
-                        LOGGER.info("Rendering weather bumper for preview...")
-                        weather_bumper = _render_weather_bumper_jit()
-                        if weather_bumper:
-                            LOGGER.info("Successfully rendered weather bumper: %s", weather_bumper)
-                        else:
-                            LOGGER.warning("Weather bumper rendering returned None (API key may be missing)")
-                    except Exception as e:
-                        LOGGER.warning("Failed to render weather bumper for preview: %s", e, exc_info=True)
-                
-                # Generate block with weather bumper if available
-                from server.bumper_block import get_generator
-                from server.generate_playlist import (
-                    find_existing_bumper,
-                    extract_episode_metadata,
-                    infer_show_title_from_path,
-                    ensure_bumper,
-                )
-                
-                next_episode = entries[next_episode_idx]
-                show_label = infer_show_title_from_path(next_episode)
-                metadata = extract_episode_metadata(next_episode)
-                
-                # Get generic bumper first
-                up_next_bumper = find_existing_bumper(show_label, metadata)
-                
-                if not up_next_bumper:
-                    up_next_bumper = ensure_bumper(show_label, None)  # Only generate generic
-                
-                # If we have episode metadata, render specific-episode bumper JIT
-                if metadata:
-                    from server.stream import _render_up_next_bumper_jit
-                    jit_bumper = _render_up_next_bumper_jit(show_label, metadata)
-                    if jit_bumper:
-                        up_next_bumper = jit_bumper  # Use JIT bumper instead of generic
-                
-                gen = get_generator()
-                block = gen.generate_block(
-                    up_next_bumper=up_next_bumper,
-                    sassy_card=None,  # Auto-draw
-                    network_bumper=None,  # Auto-draw
-                    weather_bumper=weather_bumper,  # Include weather if available
-                    skip_music=False,
-                )
-            except Exception as e:
-                LOGGER.warning("Failed to generate block on-the-fly for preview: %s", e)
+                        result_queue.put(('error', e), timeout=1.0)
+                    except queue.Full:
+                        pass
+            
+            # Start resolution in a thread with timeout
+            thread = threading.Thread(target=resolve_block, daemon=True)
+            thread.start()
+            
+            # Wait for result with timeout (25 seconds total for preview)
+            try:
+                result_type, result_value = result_queue.get(timeout=25.0)
+                if result_type == 'success':
+                    block = result_value
+                else:
+                    raise result_value
+            except queue.Empty:
+                LOGGER.warning("Preview: Bumper block resolution timed out after 25s for episode at index %d", next_episode_idx)
                 continue  # Try next bumper block
-        
-        if block and block.bumpers:
-            return {
-                "block": block,
-                "block_index": current,
-                "episode_index": next_episode_idx,
-                "episode_path": episode_path,
-            }
+            
+            if block and block.bumpers:
+                return {
+                    "block": block,
+                    "block_index": current,
+                    "episode_index": next_episode_idx,
+                    "episode_path": episode_path,
+                }
+        except Exception as e:
+            LOGGER.warning("Preview: Failed to resolve bumper block for episode at index %d: %s", next_episode_idx, e, exc_info=True)
+            continue  # Try next bumper block
     
     raise ValueError("No upcoming bumper blocks found")
 
 
 def _build_bumper_preview_payload() -> Dict[str, Any]:
-    """Build bumper preview payload from pre-generated block."""
+    """Build bumper preview payload from pre-generated block.
+    
+    Uses unified code paths and has timeout protection to prevent hanging.
+    """
+    import threading
+    import queue
+    
     entries, _ = load_playlist_entries()
     
     # Use the same logic as the "next 25" endpoint to find the actual next episode
@@ -1275,7 +1309,22 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
         # No current segment found, use first segment
         next_episode_segment = segments[0]
     
-    # Find the bumper block for this episode in the raw entries
+    # Find the bumper block for this episode
+    # Use _find_next_bumper_block which searches forward from a start position
+    # and finds the next BUMPER_BLOCK_MARKER, then resolves the block for the episode after it
+    # Start searching from the beginning of the playlist or from current position
+    start_search_idx = 0
+    if current_idx >= 0:
+        # Try to find the current episode's index in raw entries to start search from there
+        current_path = playhead.get("current_path")
+        if current_path:
+            try:
+                current_episode_idx = entries.index(current_path)
+                # Start search from a bit before current episode to catch bumper blocks
+                start_search_idx = max(0, current_episode_idx - 5)
+            except (ValueError, IndexError):
+                pass
+    
     next_episode_path = next_episode_segment.get("episode_path")
     if not next_episode_path:
         raise ValueError("Next episode segment has no episode_path")
@@ -1292,25 +1341,72 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
         else:
             raise ValueError(f"Could not find episode in playlist: {next_episode_path}")
     
-    # Find the bumper block marker before this episode
+    LOGGER.info("Preview: Next episode is %s at index %d, searching for bumper block", 
+               Path(next_episode_path).name, next_episode_idx)
+    
+    # Try to find bumper block marker before the episode first
     bumper_block_idx = next_episode_idx - 1
-    while bumper_block_idx >= 0 and entries[bumper_block_idx].strip().upper() != BUMPER_BLOCK_MARKER:
+    found_marker = False
+    while bumper_block_idx >= 0 and bumper_block_idx >= next_episode_idx - 20:  # Search up to 20 entries back
+        if entries[bumper_block_idx].strip().upper() == BUMPER_BLOCK_MARKER:
+            found_marker = True
+            break
         bumper_block_idx -= 1
     
-    if bumper_block_idx < 0:
-        raise ValueError(f"No bumper block found before episode at index {next_episode_idx}")
+    # Wrap block finding in timeout protection
+    result_queue = queue.Queue(maxsize=1)
     
-    LOGGER.info("Preview: Next episode is %s at index %d, bumper block at index %d", 
-               Path(next_episode_path).name, next_episode_idx, bumper_block_idx)
+    def find_block():
+        try:
+            if found_marker:
+                # Found a marker, use _find_next_bumper_block starting from that marker
+                info = _find_next_bumper_block(entries, bumper_block_idx)
+            else:
+                # No marker found, resolve block directly for this episode
+                # Import resolve_bumper_block from stream
+                from server.stream import resolve_bumper_block
+                
+                LOGGER.info("Preview: No bumper block marker found before episode, resolving block directly")
+                block = resolve_bumper_block(next_episode_idx, entries)
+                if not block or not block.bumpers:
+                    raise ValueError(f"Failed to resolve bumper block for episode at index {next_episode_idx}")
+                
+                info = {
+                    "block": block,
+                    "block_index": next_episode_idx - 1,  # Approximate - no actual marker
+                    "episode_index": next_episode_idx,
+                    "episode_path": next_episode_path,
+                }
+            
+            result_queue.put(('success', info), timeout=1.0)
+        except Exception as e:
+            try:
+                result_queue.put(('error', e), timeout=1.0)
+            except queue.Full:
+                pass
     
-    info = _find_next_bumper_block(entries, bumper_block_idx)
+    # Start finding block in a thread
+    thread = threading.Thread(target=find_block, daemon=True)
+    thread.start()
+    
+    # Wait for result with timeout (30 seconds total)
+    try:
+        result_type, result_value = result_queue.get(timeout=30.0)
+        if result_type == 'success':
+            info = result_value
+        else:
+            raise result_value
+    except queue.Empty:
+        LOGGER.error("Preview: Bumper block finding timed out after 30s")
+        raise RuntimeError("Preview generation timed out - bumper block resolution took too long")
+    
     block = info["block"]
     
     # Log final bumpers before generating preview video
     LOGGER.info("Preview: Generating preview video with bumpers: %s", 
               [Path(b).name for b in block.bumpers])
     
-    # Generate preview video from the pre-generated block
+    # Generate preview video from the pre-generated block (has its own timeout)
     preview_path = _generate_preview_video(block.bumpers)
     
     bumpers_summary = [
@@ -1338,11 +1434,41 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
 
 @app.get("/api/bumper-preview/next")
 def get_next_bumper_preview() -> Dict[str, Any]:
+    """Get next bumper preview with comprehensive timeout protection."""
+    import threading
+    import queue
+    
+    result_queue = queue.Queue(maxsize=1)
+    
+    def build_preview():
+        try:
+            data = _build_bumper_preview_payload()
+            result_queue.put(('success', data), timeout=1.0)
+        except Exception as e:
+            try:
+                result_queue.put(('error', e), timeout=1.0)
+            except queue.Full:
+                pass
+    
+    # Start building preview in a thread
+    thread = threading.Thread(target=build_preview, daemon=True)
+    thread.start()
+    
+    # Wait for result with timeout (35 seconds total - slightly longer than internal timeouts)
     try:
-        data = _build_bumper_preview_payload()
-        return {key: value for key, value in data.items() if key != "preview_path"}
+        result_type, result_value = result_queue.get(timeout=35.0)
+        if result_type == 'success':
+            data = result_value
+            return {key: value for key, value in data.items() if key != "preview_path"}
+        else:
+            raise result_value
+    except queue.Empty:
+        LOGGER.error("Preview endpoint timed out after 35s")
+        raise HTTPException(status_code=504, detail="Preview generation timed out - please try again")
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         LOGGER.exception("Failed to build bumper preview: %s", exc)
         raise HTTPException(status_code=500, detail="Failed to build bumper preview") from exc
