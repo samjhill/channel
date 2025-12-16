@@ -30,10 +30,14 @@ export default function BumperManager() {
     setError(null);
     try {
       const data = await fetchSassyConfig();
-      // Ensure messages is always an array
+      // Ensure messages is always an array and all required fields have defaults
       setConfig({
-        ...data,
-        messages: Array.isArray(data.messages) ? data.messages : [],
+        enabled: data?.enabled ?? false,
+        duration_seconds: data?.duration_seconds ?? 5,
+        music_volume: data?.music_volume ?? 0.5,
+        probability_between_episodes: data?.probability_between_episodes ?? 0.0,
+        style: data?.style ?? "hbn-cozy",
+        messages: Array.isArray(data?.messages) ? data.messages : [],
       });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to load sassy config";
