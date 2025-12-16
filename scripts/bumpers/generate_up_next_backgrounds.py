@@ -252,9 +252,24 @@ def generate_all_backgrounds(force: bool = False) -> None:
         
         if output_path.exists() and not force:
             file_size_mb = output_path.stat().st_size / (1024 * 1024)
-            LOGGER.info("Background %d already exists (%s, %.1f MB), skipping...", bg_id, output_path.name, file_size_mb)
-            skipped += 1
-            continue
+            # Validate file size - corrupted files (< 1MB) should be regenerated
+            if file_size_mb < 1.0:
+                LOGGER.warning("Background %d exists but is corrupted (%s, %.1f MB), regenerating...", bg_id, output_path.name, file_size_mb)
+                # Delete corrupted file
+                output_path.unlink()
+                force_regenerate = True
+            else:
+                LOGGER.info("Background %d already exists (%s, %.1f MB), skipping...", bg_id, output_path.name, file_size_mb)
+                skipped += 1
+                continue
+        else:
+            force_regenerate = False
+        
+        LOGGER.info("-" * 60)
+        if generate_background_video(bg_id, output_path):
+            generated += 1
+        else:
+            failed += 1
         
         LOGGER.info("-" * 60)
         if generate_background_video(bg_id, output_path):
