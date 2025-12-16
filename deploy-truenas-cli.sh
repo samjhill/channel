@@ -70,9 +70,19 @@ docker build -t tvchannel:latest -f server/Dockerfile . || {
 echo -e "${GREEN}Image built successfully!${NC}"
 echo ""
 
-echo -e "${BLUE}Starting container with docker-compose...${NC}"
-docker-compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-docker-compose -f "$COMPOSE_FILE" up -d || {
+echo -e "${BLUE}Starting container with docker compose...${NC}"
+# Try docker compose (V2) first, fall back to docker-compose (V1)
+if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker compose"
+elif docker-compose version >/dev/null 2>&1; then
+    COMPOSE_CMD="docker-compose"
+else
+    echo -e "${RED}Error: Neither 'docker compose' nor 'docker-compose' found${NC}"
+    exit 1
+fi
+
+$COMPOSE_CMD -f "$COMPOSE_FILE" down 2>/dev/null || true
+$COMPOSE_CMD -f "$COMPOSE_FILE" up -d || {
     echo -e "${RED}Error: Failed to start container${NC}"
     exit 1
 }
@@ -81,14 +91,14 @@ echo ""
 echo -e "${GREEN}Deployment complete!${NC}"
 echo ""
 echo "Container status:"
-docker-compose -f "$COMPOSE_FILE" ps
+$COMPOSE_CMD -f "$COMPOSE_FILE" ps
 
 echo ""
 echo "To view logs:"
-echo "  docker-compose -f $COMPOSE_FILE logs -f"
+echo "  $COMPOSE_CMD -f $COMPOSE_FILE logs -f"
 echo ""
 echo "To stop:"
-echo "  docker-compose -f $COMPOSE_FILE down"
+echo "  $COMPOSE_CMD -f $COMPOSE_FILE down"
 echo ""
 echo "Stream URL:"
 echo "  http://$(hostname -I | awk '{print $1}'):8080/channel/stream.m3u8"
