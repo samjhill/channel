@@ -27,7 +27,17 @@ fi
 echo "   ✓ Code updated"
 echo ""
 
-echo "2. Verifying syntax..."
+echo "2. Ensuring assets are copied to host directory..."
+ASSETS_HOST="/mnt/blackhole/apps/tvchannel/assets"
+if [ -d "assets/branding" ]; then
+    mkdir -p "${ASSETS_HOST}/branding" 2>/dev/null || true
+    if [ ! -f "${ASSETS_HOST}/branding/hbn_logo_bug.png" ] && [ -f "assets/branding/hbn_logo_bug.png" ]; then
+        cp "assets/branding/hbn_logo_bug.png" "${ASSETS_HOST}/branding/" && echo "   ✓ Copied logo file"
+    fi
+fi
+
+echo ""
+echo "3. Verifying syntax..."
 python3 -m py_compile server/stream.py 2>&1
 if [ $? -eq 0 ]; then
     echo "   ✓ Syntax check passed"
@@ -37,17 +47,17 @@ else
 fi
 
 echo ""
-echo "3. Stopping and removing container..."
+echo "4. Stopping and removing container..."
 $COMPOSE_CMD -f docker-compose.truenas.yml down 2>/dev/null || true
 docker rm -f tvchannel 2>/dev/null || true
 
 echo ""
-echo "4. Removing ALL images (including intermediate layers)..."
+echo "5. Removing ALL images (including intermediate layers)..."
 docker rmi tvchannel:latest 2>/dev/null || true
 docker image prune -f
 
 echo ""
-echo "5. Building FRESH image (no cache)..."
+echo "6. Building FRESH image (no cache)..."
 docker build --no-cache --pull -t tvchannel:latest -f server/Dockerfile .
 
 if [ $? -ne 0 ]; then
@@ -69,11 +79,11 @@ else
 fi
 
 echo ""
-echo "7. Waiting for initialization..."
+echo "8. Waiting for initialization..."
 sleep 5
 
 echo ""
-echo "8. Checking logs for errors..."
+echo "9. Checking logs for errors..."
 if docker logs tvchannel 2>&1 | grep -q "SyntaxError"; then
     echo "   ✗ SyntaxError still present in logs!"
     echo "   Full error:"

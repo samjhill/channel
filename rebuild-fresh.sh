@@ -59,11 +59,11 @@ else
 fi
 
 echo ""
-echo "5. Waiting for container to initialize..."
+echo "6. Waiting for container to initialize..."
 sleep 5
 
 echo ""
-echo "6. Checking container status..."
+echo "7. Checking container status..."
 if docker ps | grep -q tvchannel; then
     echo "   ✓ Container is running"
 else
