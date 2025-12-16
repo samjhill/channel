@@ -49,8 +49,9 @@ IMPROVEMENTS.md
 ISSUES.md
 PROJECT_STATUS.md
 
-# Client files (not needed in server container)
-client/
+# Client files - exclude pi_setup, but include web_test for test stream UI
+client/pi_setup/
+# Note: client/web_test/ is included for the test stream UI
 
 # UI build artifacts (will be built in container if needed)
 ui/channel-admin/node_modules
