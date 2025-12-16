@@ -896,11 +896,16 @@ def generate_bumpers_parallel(
                         )
                 elif error:
                     # Bumper generation failed, will fallback to generic or skip
+                    # Print full error (may include FFmpeg stderr)
+                    error_preview = error[:500] if len(error) > 500 else error
                     print(
                         f"[Bumpers] Failed to generate bumper for {show_title!r} "
-                        f"{f'(episode {episode_code})' if episode_code else ''}: {error}",
+                        f"{f'(episode {episode_code})' if episode_code else ''}: {error_preview}",
                         flush=True,
                     )
+                    # If error is longer, log the full error separately
+                    if len(error) > 500:
+                        LOGGER.error("Full error for %r: %s", show_title, error)
             except Exception as exc:
                 print(
                     f"[Bumpers] Unexpected error generating bumper for {show_title!r}: {exc}",
