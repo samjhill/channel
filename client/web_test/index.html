@@ -30,12 +30,17 @@
   </head>
   <body>
     <h1>TV Channel Test</h1>
-    <p>Streaming from TrueNAS: 192.168.2.39:8080</p>
+    <p>Streaming from: <span id="server-info">Detecting...</span></p>
     <video id="video" controls autoplay muted></video>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script>
+      // Auto-detect server URL (use same host as this page)
+      const serverHost = window.location.hostname;
+      const serverPort = '8080';
+      const streamUrl = `http://${serverHost}:${serverPort}/channel/stream.m3u8`;
+      document.getElementById('server-info').textContent = `${serverHost}:${serverPort}`;
+      
       const video = document.getElementById('video');
-      const streamUrl = 'http://192.168.2.39:8080/channel/stream.m3u8';
 
       if (window.Hls && Hls.isSupported()) {
         const hlsConfig = {

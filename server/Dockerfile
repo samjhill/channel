@@ -46,6 +46,6 @@ WORKDIR /app
 
 RUN chmod +x /app/entrypoint.sh /app/process_monitor.py && mkdir -p /app/hls
 
-EXPOSE 8080 8000
+EXPOSE 8080 8000 8081
 
 CMD ["/app/entrypoint.sh"]
