@@ -309,10 +309,13 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
             return False
     except Exception as e:
         LOGGER.error("Failed to stream %s: %s", src, e)
-        # Clear current process tracking on error
-        with _current_ffmpeg_lock:
-            if _current_ffmpeg_process is process:
-                _current_ffmpeg_process = None
+        # Clear current process tracking on error (if process was created)
+        try:
+            with _current_ffmpeg_lock:
+                if 'process' in locals() and _current_ffmpeg_process is process:
+                    _current_ffmpeg_process = None
+        except Exception:
+            pass  # Ignore errors in cleanup
         return False
 
 
