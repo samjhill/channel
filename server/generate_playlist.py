@@ -990,10 +990,15 @@ def write_playlist_file(slots: Sequence[EpisodeSlot]) -> None:
                         try:
                             bumper_path = ensure_bumper(slot.show_label, metadata)
                         except Exception as exc:
+                            # Print full error (may include FFmpeg stderr)
+                            error_str = str(exc)
+                            error_preview = error_str[:500] if len(error_str) > 500 else error_str
                             print(
-                                f"[Bumpers] Fallback generation failed for {slot.show_label}: {exc}",
+                                f"[Bumpers] Fallback generation failed for {slot.show_label}: {error_preview}",
                                 flush=True,
                             )
+                            # Log full error with traceback
+                            LOGGER.error("Fallback generation failed for %r: %s", slot.show_label, error_str, exc_info=True)
                             bumper_path = None
             else:
                 # For seed episodes, just check if bumper exists (don't wait for generation)
