@@ -741,6 +741,15 @@ def get_sassy_config() -> Dict[str, Any]:
     """Get the current sassy messages configuration."""
     try:
         config = load_sassy_config()
+        # Ensure messages is always an array
+        if "messages" not in config or not isinstance(config.get("messages"), list):
+            config["messages"] = []
+        # Ensure all required fields have defaults
+        config.setdefault("enabled", False)
+        config.setdefault("duration_seconds", 5)
+        config.setdefault("music_volume", 0.5)
+        config.setdefault("probability_between_episodes", 0.0)
+        config.setdefault("style", "hbn-cozy")
         return config
     except Exception as e:
         LOGGER.error("Failed to load sassy config: %s", e)
