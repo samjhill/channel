@@ -53,7 +53,13 @@ fi
 
 echo ""
 echo "6. Building COMPLETELY FRESH (no cache, no layers)..."
-docker build --no-cache --pull --progress=plain -t tvchannel:latest -f server/Dockerfile . 2>&1 | tail -20
+echo "   This may take 5-10 minutes (especially npm build step)..."
+echo "   Building with progress output..."
+docker build --no-cache --pull --progress=plain -t tvchannel:latest -f server/Dockerfile . 2>&1 | tee /tmp/docker-build.log | grep -E "(Step|RUN|COPY|npm|Building|Successfully)" || {
+    echo "   Build output saved to /tmp/docker-build.log"
+    echo "   Last 50 lines:"
+    tail -50 /tmp/docker-build.log
+}
 
 if [ $? -ne 0 ]; then
     echo "   ✗ Build failed!"
