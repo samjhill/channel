@@ -13,8 +13,10 @@ services:
       - "8080:8080"
     volumes:
       # UPDATE THESE PATHS TO MATCH YOUR TRUENAS DATASETS
-      # Media directory (read-only)
-      - /mnt/tank/media/tv:/media/tvchannel:ro
+      # Media directory (read-only) - Use your existing Samba share's dataset path
+      # To find it: Go to Shares → SMB Shares → Check the "Path" field
+      # Example: If Samba share path is /mnt/tank/media, use that here
+      - /mnt/tank/media:/media/tvchannel:ro
       # Application data directories
       - /mnt/tank/apps/tvchannel/assets:/app/assets
       - /mnt/tank/apps/tvchannel/config:/app/config

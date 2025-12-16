@@ -37,30 +37,55 @@ chmod -R 755 /mnt/tank/apps/tvchannel
 chmod -R 777 /mnt/tank/apps/tvchannel/hls
 ```
 
-### 2. Update Configuration
+### 2. Find Your Samba Share Path
+
+Since your media files are already on a Samba share, you need to find the dataset path:
+
+1. **Via TrueNAS Web UI**:
+   - Go to **Shares** → **SMB Shares**
+   - Find your media share
+   - Note the **Path** (e.g., `/mnt/tank/media` or `/mnt/pool/media/tv`)
+   - This is the path you'll use in docker-compose
+
+2. **Via Command Line**:
+   ```bash
+   # List all datasets
+   zfs list | grep media
+   
+   # Or check Samba share configs
+   midclt call smb.shares.query | grep -A 5 "path"
+   ```
+
+The path format is typically: `/mnt/POOL_NAME/DATASET_NAME`
+
+### 3. Update Configuration
 
 Edit `docker-compose.truenas.yml`:
 
-1. **Update media path** (line 15):
+1. **Update media path** (line 17) - Use your Samba share's dataset path:
    ```yaml
-   - /mnt/YOUR_POOL/media/tv:/media/tvchannel:ro
+   - /mnt/YOUR_POOL/YOUR_MEDIA_DATASET:/media/tvchannel:ro
    ```
-   Replace `YOUR_POOL` with your pool name (e.g., `tank`)
+   Example: If your Samba share path is `/mnt/tank/media`, use:
+   ```yaml
+   - /mnt/tank/media:/media/tvchannel:ro
+   ```
 
-2. **Update application paths** (lines 17-19):
+2. **Update application paths** (lines 19-21):
    ```yaml
    - /mnt/YOUR_POOL/apps/tvchannel/assets:/app/assets
    - /mnt/YOUR_POOL/apps/tvchannel/config:/app/config
    - /mnt/YOUR_POOL/apps/tvchannel/hls:/app/hls
    ```
+   Replace `YOUR_POOL` with your pool name (e.g., `tank`)
 
-3. **Update CORS origins** (line 23):
+3. **Update CORS origins** (line 24):
    ```yaml
    - CORS_ORIGINS=http://YOUR_TRUENAS_IP:5174,http://localhost:5174
    ```
    Replace `YOUR_TRUENAS_IP` with your TrueNAS IP address
 
-### 3. Deploy via TrueNAS Apps
+### 4. Deploy via TrueNAS Apps
 
 1. **Access TrueNAS Web UI**
    - Navigate to `http://your-truenas-ip`
@@ -81,20 +106,20 @@ Edit `docker-compose.truenas.yml`:
    - Click **Save**
    - Wait for deployment
 
-### 4. Add Media Files
+### 5. Verify Media Access
 
-Place your video files in the media dataset:
+Since your media is already on a Samba share, verify the container can access it:
+
 ```bash
-# Example structure
-/mnt/tank/media/tv/
-├── Show Name/
-│   ├── Season 01/
-│   │   └── Episode 01.mp4
-│   └── Season 02/
-│       └── Episode 01.mp4
+# After deployment, check if media is accessible
+docker exec tvchannel ls -la /media/tvchannel
+
+# Should show your media files/folders
 ```
 
-### 5. Access Your Stream
+Your media files should already be in the correct location via your Samba share. The container will access them directly from the dataset path.
+
+### 6. Access Your Stream
 
 - **HLS Stream**: `http://your-truenas-ip:8080/channel/stream.m3u8`
 - **Health Check**: `http://your-truenas-ip:8000/api/healthz` (if API is running)
@@ -173,6 +198,7 @@ chmod -R 777 /mnt/tank/apps/tvchannel/hls
 ## Support
 
 For detailed information, see:
+- `TRUENAS_SAMBA_SHARE.md` - **Using existing Samba shares** (if your media is already on SMB)
 - `TRUENAS_SCALE_DEPLOYMENT.md` - Full deployment guide
 - `PRODUCTION_DEPLOYMENT.md` - Production best practices
 - `README.md` - General documentation
