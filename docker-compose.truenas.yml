@@ -34,16 +34,16 @@ services:
       - CORS_ORIGINS=${CORS_ORIGINS:-http://192.168.1.100:5174,http://localhost:5174}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     restart: unless-stopped
-    # Resource limits for production
-    # Increased limits for better performance and headroom
+    # Resource limits - HIGH PERFORMANCE MODE for beefy systems
+    # Adjust these based on your system capacity
     deploy:
       resources:
         limits:
-          memory: 4G
-          cpus: '4.0'
+          memory: 16G      # Increased from 4G - allows more parallel processing
+          cpus: '8.0'       # Increased from 4.0 - more CPU cores for encoding
         reservations:
-          memory: 1G
-          cpus: '1.0'
+          memory: 4G        # Increased from 1G - ensures minimum resources
+          cpus: '2.0'       # Increased from 1.0 - minimum CPU guarantee
     # Log rotation configuration
     logging:
       driver: "json-file"

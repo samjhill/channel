@@ -170,7 +170,8 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
     cmd.extend([
         "-map", "0:a?",
         "-c:v", "libx264",
-        "-preset", "veryfast",
+        "-preset", "medium",  # Changed from "veryfast" to "medium" for better quality/faster encoding on beefy systems
+        "-threads", "0",  # Use all available CPU threads
         "-maxrate", "3000k",
         "-bufsize", "9000k",
         "-g", "60",

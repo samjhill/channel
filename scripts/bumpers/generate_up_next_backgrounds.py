@@ -193,7 +193,7 @@ def generate_background_video(
                 LOGGER.info("Rendered %d/%d frames (%.1f%%)", frame_num + 1, total_frames, 100 * (frame_num + 1) / total_frames)
         
         # Encode looping video
-        LOGGER.info("Encoding video with FFmpeg (preset=medium, crf=20)...")
+        LOGGER.info("Encoding video with FFmpeg (preset=fast, crf=20, threads=0)...")
         video_cmd = [
             "ffmpeg",
             "-y",
@@ -204,7 +204,8 @@ def generate_background_video(
             "-c:v",
             "libx264",
             "-preset",
-            "medium",  # Changed from "slow" to "medium" for faster encoding
+            "fast",  # Changed from "medium" to "fast" for faster encoding on beefy systems
+            "-threads", "0",  # Use all available CPU threads
             "-crf",
             "20",  # Slightly higher CRF (lower quality but faster) - still good quality
             "-pix_fmt",
