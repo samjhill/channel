@@ -91,9 +91,11 @@ else
     echo "   ⚠️  Bumper blocks path needs verification"
 fi
 
-# Check that no code tries to write to /media/tvchannel
-if grep -r "open.*/media/tvchannel.*w\|write.*/media/tvchannel\|mkdir.*/media/tvchannel" server/ 2>/dev/null | grep -v ".pyc" | grep -v "__pycache__"; then
+# Check that no code tries to write to /media/tvchannel (ignore comments)
+WRITE_PATTERNS=$(grep -r "open.*/media/tvchannel.*w\|write.*/media/tvchannel\|mkdir.*/media/tvchannel" server/ 2>/dev/null | grep -v ".pyc" | grep -v "__pycache__" | grep -v "^[^:]*:#" | grep -v "Never writes\|read-only\|#.*write")
+if [ -n "$WRITE_PATTERNS" ]; then
     echo "   ✗ WARNING: Found code that might write to media mount!"
+    echo "$WRITE_PATTERNS" | head -3 | sed 's/^/      /'
     ERRORS=$((ERRORS + 1))
 else
     echo "   ✓ No code writes to /media/tvchannel"
