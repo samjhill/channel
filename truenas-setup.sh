@@ -15,6 +15,16 @@ APP_NAME="tvchannel"
 MEDIA_DATASET="${MEDIA_DATASET:-media/tv}"
 APP_DATASET="apps/${APP_NAME}"
 
+# Detect pool name if not set
+if [ "${POOL_NAME}" = "tank" ] && [ ! -d "/mnt/tank" ]; then
+    # Try to detect pool from /mnt
+    DETECTED_POOL=$(ls -d /mnt/*/ 2>/dev/null | grep -v "/mnt/apps$" | head -1 | sed 's|/mnt/||' | sed 's|/$||')
+    if [ -n "${DETECTED_POOL}" ]; then
+        echo "Detected pool: ${DETECTED_POOL}"
+        POOL_NAME="${DETECTED_POOL}"
+    fi
+fi
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -27,14 +37,30 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+echo -e "${YELLOW}Configuration:${NC}"
+echo "  Pool Name: ${POOL_NAME}"
+echo "  Media Dataset: ${POOL_NAME}/${MEDIA_DATASET}"
+echo "  App Dataset: ${POOL_NAME}/${APP_DATASET}"
+echo ""
 echo -e "${YELLOW}This script will:${NC}"
 echo "1. Create datasets for TV Channel application"
 echo "2. Set up directory structure"
 echo "3. Set appropriate permissions"
 echo ""
+echo -e "${YELLOW}Note:${NC} If your media is already on a Samba share, you can skip"
+echo "      creating the media dataset. Just note the path for docker-compose.yml"
+echo ""
 read -p "Continue? (y/n) " -n 1 -r
 echo
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    exit 1
+fi
+
+# Warn if trying to use system directory
+if [ "${POOL_NAME}" = "apps" ]; then
+    echo -e "${RED}WARNING: 'apps' is a system directory!${NC}"
+    echo "Please set POOL_NAME to your actual pool (e.g., blackhole, tank)"
+    echo "Example: POOL_NAME=blackhole $0"
     exit 1
 fi
 

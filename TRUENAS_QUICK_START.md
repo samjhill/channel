@@ -8,57 +8,78 @@
 
 ## Quick Deployment Steps
 
-### 1. Prepare Storage (One-time setup)
+### 1. Find Your Pool Name
 
-**Option A: Using the setup script** (recommended)
+First, identify your pool name (it might be `tank`, `blackhole`, or something else):
+
 ```bash
 # SSH into TrueNAS Scale
 ssh root@your-truenas-ip
 
-# Clone repository
-cd /mnt/tank/apps
-git clone https://github.com/your-username/channel.git tvchannel
+# List pools
+zpool list
+
+# Or check what's in /mnt
+ls -la /mnt/
+```
+
+**Important**: `/mnt/apps/applications` is TrueNAS Scale's Kubernetes system directory - don't use this for your app or media!
+
+### 2. Prepare Storage (One-time setup)
+
+**Option A: Using the setup script** (recommended)
+```bash
+# Clone repository to a user dataset (NOT /mnt/apps/applications)
+# Replace 'blackhole' with your actual pool name
+cd /mnt/blackhole  # or /mnt/tank, or your pool name
+mkdir -p apps
+cd apps
+git clone https://github.com/samjhill/channel.git tvchannel
 cd tvchannel
 
-# Run setup script
-chmod +x truenas-setup.sh
-./truenas-setup.sh
+# Run setup script (update POOL_NAME if needed)
+POOL_NAME=blackhole ./truenas-setup.sh  # Replace 'blackhole' with your pool
 ```
 
 **Option B: Manual setup**
 ```bash
-# Create datasets
-zfs create -p tank/apps/tvchannel/assets
-zfs create -p tank/apps/tvchannel/config
-zfs create -p tank/apps/tvchannel/hls
+# Replace 'blackhole' with your actual pool name
+POOL_NAME=blackhole  # or 'tank', etc.
+
+# Create datasets for app data
+zfs create -p ${POOL_NAME}/apps/tvchannel/assets
+zfs create -p ${POOL_NAME}/apps/tvchannel/config
+zfs create -p ${POOL_NAME}/apps/tvchannel/hls
 
 # Set permissions
-chmod -R 755 /mnt/tank/apps/tvchannel
-chmod -R 777 /mnt/tank/apps/tvchannel/hls
+chmod -R 755 /mnt/${POOL_NAME}/apps/tvchannel
+chmod -R 777 /mnt/${POOL_NAME}/apps/tvchannel/hls
 ```
 
-### 2. Find Your Samba Share Path
+### 3. Find Your Samba Share Path
 
-Since your media files are already on a Samba share, you need to find the dataset path:
+Since your media files are already on a Samba share, find the dataset path:
 
 1. **Via TrueNAS Web UI**:
    - Go to **Shares** → **SMB Shares**
    - Find your media share
-   - Note the **Path** (e.g., `/mnt/tank/media` or `/mnt/pool/media/tv`)
-   - This is the path you'll use in docker-compose
+   - Note the **Path** field (e.g., `/mnt/blackhole/media` or `/mnt/tank/shared/media`)
+   - This is the dataset path you'll use in docker-compose
 
 2. **Via Command Line**:
    ```bash
-   # List all datasets
-   zfs list | grep media
+   # List all datasets (replace 'blackhole' with your pool)
+   zfs list | grep -E "(NAME|media|shared)"
    
    # Or check Samba share configs
-   midclt call smb.shares.query | grep -A 5 "path"
+   midclt call smb.shares.query | grep -E "(name|path)"
    ```
 
-The path format is typically: `/mnt/POOL_NAME/DATASET_NAME`
+The path format is: `/mnt/POOL_NAME/DATASET_NAME`
 
-### 3. Update Configuration
+**Example**: If your pool is `blackhole` and your media dataset is `media`, the path would be `/mnt/blackhole/media`
+
+### 4. Update Configuration
 
 Edit `docker-compose.truenas.yml`:
 
@@ -66,18 +87,27 @@ Edit `docker-compose.truenas.yml`:
    ```yaml
    - /mnt/YOUR_POOL/YOUR_MEDIA_DATASET:/media/tvchannel:ro
    ```
-   Example: If your Samba share path is `/mnt/tank/media`, use:
+   **Example**: If your pool is `blackhole` and media dataset is `media`:
    ```yaml
-   - /mnt/tank/media:/media/tvchannel:ro
+   - /mnt/blackhole/media:/media/tvchannel:ro
+   ```
+   **Example**: If your pool is `tank` and media dataset is `shared/media`:
+   ```yaml
+   - /mnt/tank/shared/media:/media/tvchannel:ro
    ```
 
-2. **Update application paths** (lines 19-21):
+2. **Update application paths** (lines 19-21) - Use your pool name:
    ```yaml
    - /mnt/YOUR_POOL/apps/tvchannel/assets:/app/assets
    - /mnt/YOUR_POOL/apps/tvchannel/config:/app/config
    - /mnt/YOUR_POOL/apps/tvchannel/hls:/app/hls
    ```
-   Replace `YOUR_POOL` with your pool name (e.g., `tank`)
+   **Example** (if pool is `blackhole`):
+   ```yaml
+   - /mnt/blackhole/apps/tvchannel/assets:/app/assets
+   - /mnt/blackhole/apps/tvchannel/config:/app/config
+   - /mnt/blackhole/apps/tvchannel/hls:/app/hls
+   ```
 
 3. **Update CORS origins** (line 24):
    ```yaml
@@ -85,7 +115,7 @@ Edit `docker-compose.truenas.yml`:
    ```
    Replace `YOUR_TRUENAS_IP` with your TrueNAS IP address
 
-### 4. Deploy via TrueNAS Apps
+### 5. Deploy via TrueNAS Apps
 
 1. **Access TrueNAS Web UI**
    - Navigate to `http://your-truenas-ip`
@@ -106,7 +136,7 @@ Edit `docker-compose.truenas.yml`:
    - Click **Save**
    - Wait for deployment
 
-### 5. Verify Media Access
+### 6. Verify Media Access
 
 Since your media is already on a Samba share, verify the container can access it:
 
@@ -119,7 +149,7 @@ docker exec tvchannel ls -la /media/tvchannel
 
 Your media files should already be in the correct location via your Samba share. The container will access them directly from the dataset path.
 
-### 6. Access Your Stream
+### 7. Access Your Stream
 
 - **HLS Stream**: `http://your-truenas-ip:8080/channel/stream.m3u8`
 - **Health Check**: `http://your-truenas-ip:8000/api/healthz` (if API is running)
@@ -132,8 +162,8 @@ If you prefer command-line:
 # SSH into TrueNAS
 ssh root@your-truenas-ip
 
-# Navigate to app directory
-cd /mnt/tank/apps/tvchannel
+# Navigate to app directory (replace 'blackhole' with your pool)
+cd /mnt/blackhole/apps/tvchannel  # or /mnt/tank/apps/tvchannel
 
 # Update docker-compose.truenas.yml with your paths
 
@@ -177,10 +207,10 @@ ports:
 ```
 
 ### Permission Denied
-Ensure datasets have correct permissions:
+Ensure datasets have correct permissions (replace 'blackhole' with your pool):
 ```bash
-chmod -R 755 /mnt/tank/apps/tvchannel
-chmod -R 777 /mnt/tank/apps/tvchannel/hls
+chmod -R 755 /mnt/blackhole/apps/tvchannel
+chmod -R 777 /mnt/blackhole/apps/tvchannel/hls
 ```
 
 ### Can't Access Stream
@@ -190,10 +220,12 @@ chmod -R 777 /mnt/tank/apps/tvchannel/hls
 
 ## Next Steps
 
-- Configure channel settings in `/mnt/tank/apps/tvchannel/config/channel_settings.json`
-- Add bumper assets to `/mnt/tank/apps/tvchannel/assets/`
+- Configure channel settings in `/mnt/YOUR_POOL/apps/tvchannel/config/channel_settings.json`
+- Add bumper assets to `/mnt/YOUR_POOL/apps/tvchannel/assets/`
 - Set up backups (see TRUENAS_SCALE_DEPLOYMENT.md)
 - Configure monitoring and alerts
+
+**Note**: Replace `YOUR_POOL` with your actual pool name (e.g., `blackhole`, `tank`, etc.)
 
 ## Support
 

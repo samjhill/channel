@@ -13,14 +13,27 @@ services:
       - "8080:8080"
     volumes:
       # UPDATE THESE PATHS TO MATCH YOUR TRUENAS DATASETS
-      # Media directory (read-only) - Use your existing Samba share's dataset path
-      # To find it: Go to Shares → SMB Shares → Check the "Path" field
-      # Example: If Samba share path is /mnt/tank/media, use that here
-      - /mnt/tank/media:/media/tvchannel:ro
-      # Application data directories
-      - /mnt/tank/apps/tvchannel/assets:/app/assets
-      - /mnt/tank/apps/tvchannel/config:/app/config
-      - /mnt/tank/apps/tvchannel/hls:/app/hls
+      # 
+      # STEP 1: Find your pool name (run: zpool list or ls /mnt/)
+      # Common pools: tank, blackhole, etc.
+      #
+      # STEP 2: Find your media Samba share path
+      # Go to Shares → SMB Shares → Check the "Path" field
+      # Example: /mnt/blackhole/media or /mnt/tank/shared/media
+      #
+      # Media directory (read-only) - Use your Samba share's dataset path
+      - /mnt/YOUR_POOL/YOUR_MEDIA_DATASET:/media/tvchannel:ro
+      # 
+      # Application data directories - Replace YOUR_POOL with your pool name
+      - /mnt/YOUR_POOL/apps/tvchannel/assets:/app/assets
+      - /mnt/YOUR_POOL/apps/tvchannel/config:/app/config
+      - /mnt/YOUR_POOL/apps/tvchannel/hls:/app/hls
+      #
+      # EXAMPLE (if pool is 'blackhole' and media is at 'media'):
+      # - /mnt/blackhole/media:/media/tvchannel:ro
+      # - /mnt/blackhole/apps/tvchannel/assets:/app/assets
+      # - /mnt/blackhole/apps/tvchannel/config:/app/config
+      # - /mnt/blackhole/apps/tvchannel/hls:/app/hls
     environment:
       # UPDATE CORS_ORIGINS with your TrueNAS IP/domain
       - CORS_ORIGINS=${CORS_ORIGINS:-http://192.168.1.100:5174,http://localhost:5174}
