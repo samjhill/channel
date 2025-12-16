@@ -344,17 +344,22 @@ def update_channel(channel_id: str, updated: Dict[str, Any]) -> Dict[str, Any]:
     from .settings_service import _invalidate_settings_cache
     _invalidate_settings_cache()
     
-    # Trigger playlist regeneration by restarting generate_playlist.py process
-    # This ensures the playlist reflects the updated channel settings
+    # Trigger playlist regeneration by running generate_playlist.py directly
+    # This ensures the playlist reflects the updated channel settings immediately
     try:
-        # Send SIGTERM to generate_playlist.py to trigger graceful restart via process_monitor
+        # Run generate_playlist.py in the container to regenerate playlist with new settings
         result = subprocess.run(
-            ["docker", "exec", "tvchannel", "pkill", "-SIGTERM", "-f", "generate_playlist.py"],
+            ["docker", "exec", "tvchannel", "python3", "/app/server/generate_playlist.py"],
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=300,  # 5 minute timeout for playlist generation
         )
-        LOGGER.info("Triggered playlist regeneration by restarting generate_playlist.py process")
+        if result.returncode == 0:
+            LOGGER.info("Playlist regenerated successfully after channel settings update")
+        else:
+            LOGGER.warning("Playlist regeneration returned non-zero exit code: %s", result.stderr[:500])
+    except subprocess.TimeoutExpired:
+        LOGGER.warning("Playlist regeneration timed out after 5 minutes")
     except Exception as e:
         LOGGER.warning("Failed to trigger playlist regeneration: %s", e)
     
