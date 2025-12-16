@@ -88,6 +88,11 @@ if [ $ERRORS -eq 0 ]; then
     echo ""
     echo "To rebuild and restart:"
     echo "  docker build -t tvchannel:latest -f server/Dockerfile ."
+    echo "  # Try Docker Compose V2 first (TrueNAS Scale uses this):"
+    echo "  docker compose -f docker-compose.truenas.yml down"
+    echo "  docker compose -f docker-compose.truenas.yml up -d"
+    echo "  # Or if that doesn't work, try V1:"
+    echo "  docker-compose -f docker-compose.truenas.yml down"
     echo "  docker-compose -f docker-compose.truenas.yml up -d"
     exit 0
 else
