@@ -1160,7 +1160,9 @@ def _generate_preview_video(bumpers: List[str]) -> Path:
     with tempfile.NamedTemporaryFile("w", delete=False, dir=str(preview_dir), suffix=".txt") as tmp_file:
         concat_file = Path(tmp_file.name)
         for bumper_path in bumpers:
-            tmp_file.write(f"file '{_sanitize_concat_path(Path(bumper_path))}'\n")
+            sanitized = _sanitize_concat_path(Path(bumper_path))
+            tmp_file.write(f"file '{sanitized}'\n")
+        tmp_file.flush()  # Ensure file is written before closing
     
     cmd = [
         "ffmpeg",
