@@ -11,7 +11,8 @@ echo ""
 
 # Configuration
 POOL_NAME="${POOL_NAME:-blackhole}"
-APP_DIR="/mnt/${POOL_NAME}/apps/tvchannel"
+APP_NAME="${APP_NAME:-channel}"  # Can be 'channel' or 'tvchannel'
+APP_DIR="/mnt/${POOL_NAME}/apps/${APP_NAME}"
 COMPOSE_FILE="${APP_DIR}/docker-compose.truenas.yml"
 
 # Colors
@@ -27,14 +28,22 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Check if app directory exists
-if [ ! -d "$APP_DIR" ]; then
-    echo -e "${RED}Error: App directory not found: $APP_DIR${NC}"
-    echo "Please run the setup script first: POOL_NAME=${POOL_NAME} ./truenas-setup.sh"
-    exit 1
+# Auto-detect current directory if running from app directory
+if [ -f "docker-compose.truenas.yml" ] && [ -f "server/Dockerfile" ]; then
+    echo -e "${BLUE}Detected app directory: $(pwd)${NC}"
+    APP_DIR="$(pwd)"
+    COMPOSE_FILE="${APP_DIR}/docker-compose.truenas.yml"
+else
+    # Check if app directory exists
+    if [ ! -d "$APP_DIR" ]; then
+        echo -e "${RED}Error: App directory not found: $APP_DIR${NC}"
+        echo "Either:"
+        echo "  1. Run this script from the app directory, or"
+        echo "  2. Set APP_NAME: APP_NAME=channel $0"
+        exit 1
+    fi
+    cd "$APP_DIR"
 fi
-
-cd "$APP_DIR"
 
 # Check if docker-compose file exists
 if [ ! -f "$COMPOSE_FILE" ]; then

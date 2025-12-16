@@ -11,7 +11,7 @@ echo ""
 
 # Configuration
 POOL_NAME="${POOL_NAME:-tank}"
-APP_NAME="tvchannel"
+APP_NAME="${APP_NAME:-channel}"  # Can be 'channel' or 'tvchannel'
 MEDIA_DATASET="${MEDIA_DATASET:-media/tv}"
 APP_DATASET="apps/${APP_NAME}"
 
