@@ -1540,14 +1540,18 @@ def get_next_bumper_preview() -> Dict[str, Any]:
     """Get next bumper preview with comprehensive timeout protection."""
     import threading
     import queue
+    import traceback
     
     result_queue = queue.Queue(maxsize=1)
+    error_details = {"traceback": None}
     
     def build_preview():
         try:
             data = _build_bumper_preview_payload()
             result_queue.put(('success', data), timeout=1.0)
         except Exception as e:
+            error_details["traceback"] = traceback.format_exc()
+            error_details["error"] = str(e)
             try:
                 result_queue.put(('error', e), timeout=1.0)
             except queue.Full:
@@ -1564,17 +1568,30 @@ def get_next_bumper_preview() -> Dict[str, Any]:
             data = result_value
             return {key: value for key, value in data.items() if key != "preview_path"}
         else:
+            # Log the full traceback before raising
+            if error_details.get("traceback"):
+                LOGGER.error("Preview generation failed:\n%s", error_details["traceback"])
             raise result_value
     except queue.Empty:
         LOGGER.error("Preview endpoint timed out after 35s")
         raise HTTPException(status_code=504, detail="Preview generation timed out - please try again")
     except ValueError as exc:
+        LOGGER.error("Preview: ValueError - %s", exc)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        LOGGER.error("Preview: FileNotFoundError - %s", exc)
+        raise HTTPException(status_code=404, detail=f"Bumper file not found: {str(exc)}") from exc
+    except RuntimeError as exc:
+        LOGGER.error("Preview: RuntimeError - %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     except HTTPException:
         raise
     except Exception as exc:
+        error_msg = error_details.get("error", str(exc))
         LOGGER.exception("Failed to build bumper preview: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to build bumper preview") from exc
+        if error_details.get("traceback"):
+            LOGGER.error("Full traceback:\n%s", error_details["traceback"])
+        raise HTTPException(status_code=500, detail=f"Failed to build bumper preview: {error_msg}") from exc
 
 
 @app.get("/api/bumper-preview/video")
