@@ -11,6 +11,17 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT
 
+# Ensure assets directory has required files (if volume mount is empty)
+# This is a fallback - assets should be copied during setup, but this ensures they exist
+if [ -d "/app/assets/branding" ] && [ ! -f "/app/assets/branding/hbn_logo_bug.png" ]; then
+    # Check if we have assets in the image that we can copy
+    if [ -d "/app/assets" ] && [ -f "/app/assets/branding/hbn_logo_bug.png" ]; then
+        echo "Copying logo file to assets directory..."
+        mkdir -p /app/assets/branding
+        cp /app/assets/branding/hbn_logo_bug.png /app/assets/branding/ 2>/dev/null || true
+    fi
+fi
+
 # Start nginx first so the HLS endpoint is available immediately
 # Ensure our custom config is used and default sites are disabled
 rm -f /etc/nginx/sites-enabled/* 2>/dev/null || true

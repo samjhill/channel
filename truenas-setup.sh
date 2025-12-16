@@ -142,6 +142,16 @@ mkdir -p "${ASSETS_DIR}/bumpers" || true
 mkdir -p "${ASSETS_DIR}/branding" || true
 mkdir -p "${ASSETS_DIR}/music" || true
 
+# Copy branding assets from repo if they exist
+REPO_ASSETS="${SCRIPT_DIR}/assets"
+if [ -d "${REPO_ASSETS}/branding" ]; then
+    echo "Copying branding assets..."
+    cp -r "${REPO_ASSETS}/branding/"* "${ASSETS_DIR}/branding/" 2>/dev/null || true
+    if [ -f "${ASSETS_DIR}/branding/hbn_logo_bug.png" ]; then
+        echo "  ✓ Logo file copied"
+    fi
+fi
+
 echo -e "\n${GREEN}Setup complete!${NC}"
 echo ""
 echo "Next steps:"
