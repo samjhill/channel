@@ -103,17 +103,22 @@ CONFIG_DIR="/mnt/${POOL_NAME}/${APP_DATASET}/config"
 if [ ! -f "${CONFIG_DIR}/channel_settings.json" ]; then
     echo "Creating default channel_settings.json..."
     mkdir -p "${CONFIG_DIR}"
-    cat > "${CONFIG_DIR}/channel_settings.json" << 'EOF'
+    cat > "${CONFIG_DIR}/channel_settings.json" << EOF
 {
   "channels": [
     {
       "id": "main",
-      "label": "Main Channel",
-      "media_root": "/media/tvchannel"
+      "name": "Main Channel",
+      "enabled": true,
+      "media_root": "/media/tvchannel",
+      "playback_mode": "sequential",
+      "loop_entire_library": true,
+      "shows": []
     }
   ]
 }
 EOF
+    echo "  Default media_root: /media/tvchannel (maps to /mnt/${POOL_NAME}/media/tv on host)"
 fi
 
 # Create assets directory structure

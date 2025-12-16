@@ -1083,6 +1083,7 @@ def maybe_write_sassy_card(handle) -> None:
 def main():
     settings = load_settings()
     channel = resolve_channel(settings)
+    # Default to /media/tvchannel (maps to /mnt/blackhole/media/tv on TrueNAS host)
     media_root = channel.get("media_root") or "/media/tvchannel"
     # Normalize path for container if needed
     media_root = _normalize_path_for_container(media_root)
