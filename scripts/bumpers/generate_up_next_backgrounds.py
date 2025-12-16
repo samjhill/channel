@@ -246,6 +246,31 @@ def generate_all_backgrounds(force: bool = False) -> None:
     
     backgrounds_dir.mkdir(parents=True, exist_ok=True)
     
+    # Quick check: if all backgrounds exist and are valid, skip generation entirely
+    if not force:
+        all_exist = True
+        for bg_id in range(NUM_BACKGROUNDS):
+            bg_path = backgrounds_dir / f"bg_{bg_id:02d}.mp4"
+            if not bg_path.exists():
+                all_exist = False
+                break
+            # Validate file size - corrupted files (< 1MB) should be regenerated
+            try:
+                file_size_mb = bg_path.stat().st_size / (1024 * 1024)
+                if file_size_mb < 1.0:
+                    LOGGER.warning("Background %d exists but is corrupted (%s, %.1f MB), will regenerate", bg_id, bg_path.name, file_size_mb)
+                    all_exist = False
+                    break
+            except OSError:
+                all_exist = False
+                break
+        
+        if all_exist:
+            LOGGER.info("All %d backgrounds already exist and are valid, skipping generation", NUM_BACKGROUNDS)
+            LOGGER.info("=" * 60)
+            LOGGER.info("Generation complete! Generated: 0, Skipped: %d, Failed: 0", NUM_BACKGROUNDS)
+            return
+    
     generated = 0
     skipped = 0
     failed = 0
