@@ -11,6 +11,9 @@ docker run -d \
   -v /mnt/blackhole/apps/tvchannel/assets:/app/assets \
   -v /mnt/blackhole/apps/tvchannel/config:/app/config \
   -v /mnt/blackhole/apps/tvchannel/hls:/app/hls \
+  --read-only \
+  --tmpfs /tmp \
+  --tmpfs /var/run \
   --restart unless-stopped \
   tvchannel:latest
 
