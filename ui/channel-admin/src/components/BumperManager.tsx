@@ -30,7 +30,11 @@ export default function BumperManager() {
     setError(null);
     try {
       const data = await fetchSassyConfig();
-      setConfig(data);
+      // Ensure messages is always an array
+      setConfig({
+        ...data,
+        messages: Array.isArray(data.messages) ? data.messages : [],
+      });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Failed to load sassy config";
       setError(errorMsg);
@@ -297,15 +301,16 @@ export default function BumperManager() {
         </div>
 
         <div className="form-section">
-          <h3>Messages ({config.messages.length})</h3>
+          <h3>Messages ({config.messages?.length || 0})</h3>
           <div className="message-list">
-            {config.messages.map((message, index) => (
+            {(config.messages || []).map((message, index) => (
               <div key={index} className="message-item">
                 {editingIndex === index ? (
                   <div className="message-edit">
                     <textarea
                       value={message}
                       onChange={(e) => {
+                        if (!config.messages) return;
                         const updated = [...config.messages];
                         updated[index] = e.target.value;
                         setConfig({ ...config, messages: updated });
@@ -351,7 +356,7 @@ export default function BumperManager() {
                       <button
                         className="btn-small"
                         onClick={() => handleMoveMessage(index, "down")}
-                        disabled={index === config.messages.length - 1}
+                        disabled={!config.messages || index === config.messages.length - 1}
                         title="Move down"
                       >
                         ↓
