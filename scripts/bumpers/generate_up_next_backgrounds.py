@@ -270,12 +270,6 @@ def generate_all_backgrounds(force: bool = False) -> None:
             generated += 1
         else:
             failed += 1
-        
-        LOGGER.info("-" * 60)
-        if generate_background_video(bg_id, output_path):
-            generated += 1
-        else:
-            failed += 1
     
     LOGGER.info("=" * 60)
     LOGGER.info("Generation complete! Generated: %d, Skipped: %d, Failed: %d", generated, skipped, failed)
