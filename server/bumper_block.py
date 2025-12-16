@@ -163,6 +163,11 @@ class BumperBlockGenerator:
         with self._pregen_lock:
             if spec_hash in self._pregenerated_blocks:
                 block = self._pregenerated_blocks.pop(spec_hash)
+                # Clean up episode_path index if present
+                if block.episode_path and block.episode_path in self._blocks_by_episode:
+                    # Only remove if it's the same block (by object identity)
+                    if self._blocks_by_episode[block.episode_path] is block:
+                        del self._blocks_by_episode[block.episode_path]
                 LOGGER.info(
                     "Retrieved pre-generated bumper block (exact match) %s (bumpers: %d, remaining cache: %d)",
                     spec_hash[:8],
@@ -178,6 +183,10 @@ class BumperBlockGenerator:
                 test_hash = self._spec_hash(up_next_bumper, None, None, weather_bumper if weather_bumper else None)
                 if test_hash in self._pregenerated_blocks:
                     block = self._pregenerated_blocks.pop(test_hash)
+                    # Clean up episode_path index
+                    if block.episode_path and block.episode_path in self._blocks_by_episode:
+                        if self._blocks_by_episode[block.episode_path] is block:
+                            del self._blocks_by_episode[block.episode_path]
                     LOGGER.info(
                         "Retrieved pre-generated bumper block (hash match with None sassy) %s (bumpers: %d)",
                         test_hash[:8],
@@ -189,6 +198,10 @@ class BumperBlockGenerator:
                 test_hash = self._spec_hash(up_next_bumper, None, None, None)
                 if test_hash in self._pregenerated_blocks:
                     block = self._pregenerated_blocks.pop(test_hash)
+                    # Clean up episode_path index
+                    if block.episode_path and block.episode_path in self._blocks_by_episode:
+                        if self._blocks_by_episode[block.episode_path] is block:
+                            del self._blocks_by_episode[block.episode_path]
                     LOGGER.info(
                         "Retrieved pre-generated bumper block (hash match up_next only) %s (bumpers: %d)",
                         test_hash[:8],
@@ -204,6 +217,10 @@ class BumperBlockGenerator:
                         # The up_next_bumper should be in the bumpers list (typically 3rd position)
                         if up_next_bumper in cached_block.bumpers:
                             block = self._pregenerated_blocks.pop(cached_hash)
+                            # Clean up episode_path index
+                            if block.episode_path and block.episode_path in self._blocks_by_episode:
+                                if self._blocks_by_episode[block.episode_path] is block:
+                                    del self._blocks_by_episode[block.episode_path]
                             LOGGER.info(
                                 "Retrieved pre-generated bumper block (up_next match in bumpers) %s (bumpers: %d)",
                                 cached_hash[:8],
@@ -216,6 +233,10 @@ class BumperBlockGenerator:
                 if self._pregenerated_blocks:
                     first_hash = next(iter(self._pregenerated_blocks.keys()))
                     block = self._pregenerated_blocks.pop(first_hash)
+                    # Clean up episode_path index
+                    if block.episode_path and block.episode_path in self._blocks_by_episode:
+                        if self._blocks_by_episode[block.episode_path] is block:
+                            del self._blocks_by_episode[block.episode_path]
                     LOGGER.info(
                         "Retrieved pre-generated bumper block (first available) %s (bumpers: %d)",
                         first_hash[:8],
@@ -284,12 +305,16 @@ class BumperBlockGenerator:
                 LOGGER.error("Failed to draw network bumper: %s", e, exc_info=True)
                 network_bumper = None
         
-        # Handle weather bumper marker
-        if weather_bumper == "WEATHER_BUMPER":
+        # Track if weather was originally requested (before JIT rendering)
+        weather_was_requested = weather_bumper == "WEATHER_BUMPER"
+        
+        # Handle weather bumper marker - render JIT if requested
+        if weather_was_requested:
             try:
                 from server.stream import _render_weather_bumper_jit
                 weather_bumper = _render_weather_bumper_jit()
-            except Exception:
+            except Exception as e:
+                LOGGER.warning("Failed to render weather bumper JIT: %s", e)
                 weather_bumper = None
         
         sassy_exists = sassy_card and os.path.exists(sassy_card)
@@ -323,8 +348,8 @@ class BumperBlockGenerator:
             LOGGER.error(error_msg)
             return None
         
-        # If weather is missing but was requested, log a warning but continue
-        if weather_bumper == "WEATHER_BUMPER" and not weather_exists:
+        # If weather was requested but is missing, log a warning but continue
+        if weather_was_requested and not weather_exists:
             LOGGER.warning("Weather bumper was requested but not available, continuing without it")
 
         # Collect all valid bumpers in the correct order:
@@ -538,16 +563,66 @@ class BumperBlockGenerator:
             return None
     
     def queue_pregen(self, block_spec: Dict[str, Any]) -> None:
-        """Queue a bumper block for pre-generation."""
+        """Queue a bumper block for pre-generation.
+        
+        Checks for duplicates to avoid redundant work:
+        - If already cached, skip
+        - If already queued, skip
+        - Otherwise, add to queue
+        """
+        episode_path = block_spec.get("episode_path")
+        up_next_bumper = block_spec.get("up_next_bumper")
+        
         with self._pregen_lock:
+            # Check if already cached by episode path
+            if episode_path and episode_path in self._blocks_by_episode:
+                LOGGER.debug(
+                    "Skipping pre-generation queue - block already cached for episode %s",
+                    Path(episode_path).name if episode_path else "unknown"
+                )
+                return
+            
+            # Check if already cached by spec hash
+            spec_hash = self._spec_hash(
+                up_next_bumper,
+                block_spec.get("sassy_card"),
+                block_spec.get("network_bumper"),
+                block_spec.get("weather_bumper"),
+            )
+            if spec_hash in self._pregenerated_blocks:
+                LOGGER.debug(
+                    "Skipping pre-generation queue - block already cached with hash %s",
+                    spec_hash[:8]
+                )
+                return
+            
+            # Check if already queued (by episode path or spec hash)
+            for queued_spec in self._pregen_queue:
+                queued_episode = queued_spec.get("episode_path")
+                queued_hash = self._spec_hash(
+                    queued_spec.get("up_next_bumper"),
+                    queued_spec.get("sassy_card"),
+                    queued_spec.get("network_bumper"),
+                    queued_spec.get("weather_bumper"),
+                )
+                if (episode_path and queued_episode == episode_path) or queued_hash == spec_hash:
+                    LOGGER.debug(
+                        "Skipping pre-generation queue - block already queued for episode %s",
+                        Path(episode_path).name if episode_path else "unknown"
+                    )
+                    return
+            
+            # Not cached or queued - add to queue
             self._pregen_queue.append(block_spec)
             queue_size = len(self._pregen_queue)
             cache_size = len(self._pregenerated_blocks)
+        
         LOGGER.info(
-            "Added block to pre-generation queue (queue size: %d, cache size: %d, up_next: %s)",
+            "Added block to pre-generation queue (queue size: %d, cache size: %d, up_next: %s, episode: %s)",
             queue_size,
             cache_size,
-            Path(block_spec.get("up_next_bumper", "")).name if block_spec.get("up_next_bumper") else None,
+            Path(up_next_bumper).name if up_next_bumper else None,
+            Path(episode_path).name if episode_path else "unknown",
         )
     
     def start_pregen_thread(self) -> None:
@@ -606,6 +681,33 @@ class BumperBlockGenerator:
                             block.episode_path = episode_path
                         
                         with self._pregen_lock:
+                            # Check if spec_hash already exists (shouldn't happen, but be safe)
+                            if spec_hash in self._pregenerated_blocks:
+                                LOGGER.warning(
+                                    "Pre-generation worker: Spec hash %s already exists in cache, overwriting",
+                                    spec_hash[:8]
+                                )
+                                # Clean up old episode_path entry if present
+                                old_block = self._pregenerated_blocks[spec_hash]
+                                if old_block.episode_path and old_block.episode_path in self._blocks_by_episode:
+                                    if self._blocks_by_episode[old_block.episode_path] is old_block:
+                                        del self._blocks_by_episode[old_block.episode_path]
+                            
+                            # Check if episode_path already exists with different block (shouldn't happen)
+                            if episode_path and episode_path in self._blocks_by_episode:
+                                existing_block = self._blocks_by_episode[episode_path]
+                                if existing_block is not block:
+                                    LOGGER.warning(
+                                        "Pre-generation worker: Episode path %s already has a different block cached, overwriting",
+                                        Path(episode_path).name if episode_path else "unknown"
+                                    )
+                                    # Remove old block from main cache if present
+                                    for old_hash, old_block in list(self._pregenerated_blocks.items()):
+                                        if old_block is existing_block:
+                                            del self._pregenerated_blocks[old_hash]
+                                            break
+                            
+                            # Store the new block
                             self._pregenerated_blocks[spec_hash] = block
                             if episode_path:
                                 self._blocks_by_episode[episode_path] = block
@@ -618,22 +720,36 @@ class BumperBlockGenerator:
                             len(block.bumpers) if block else 0,
                         )
                     else:
-                        LOGGER.warning("Pre-generation worker: Block generation returned None")
+                        LOGGER.warning(
+                            "Pre-generation worker: Block generation returned None for episode %s (up_next: %s)",
+                            Path(block_spec.get("episode_path", "")).name if block_spec.get("episode_path") else "unknown",
+                            Path(up_next).name if up_next else None,
+                        )
                 except Exception as e:
-                    LOGGER.error(f"Pre-generation worker: Failed to pre-generate bumper block: {e}", exc_info=True)
+                    LOGGER.error(
+                        "Pre-generation worker: Failed to pre-generate bumper block for episode %s (up_next: %s): %s",
+                        Path(block_spec.get("episode_path", "")).name if block_spec.get("episode_path") else "unknown",
+                        Path(up_next).name if up_next else None,
+                        e,
+                        exc_info=True
+                    )
             else:
                 # No work, sleep briefly
                 time.sleep(0.5)
 
 
-# Global instance
+# Global instance with thread-safe initialization
 _generator: Optional[BumperBlockGenerator] = None
+_generator_lock = threading.Lock()
 
 
 def get_generator() -> BumperBlockGenerator:
-    """Get the global bumper block generator instance."""
+    """Get the global bumper block generator instance (thread-safe singleton)."""
     global _generator
     if _generator is None:
-        _generator = BumperBlockGenerator()
+        with _generator_lock:
+            # Double-check pattern to avoid race condition
+            if _generator is None:
+                _generator = BumperBlockGenerator()
     return _generator
 

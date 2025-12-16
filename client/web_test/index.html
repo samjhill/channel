@@ -45,8 +45,10 @@
           liveSyncDuration: 20,
           liveMaxLatencyDuration: 120,
           maxBufferSize: 60 * 1000 * 1000,
-          // Allow seeking over small buffer holes (increased from 0.5 to 1.0)
-          maxBufferHole: 1.0,
+          // Allow seeking over buffer holes (increased to handle discontinuities)
+          maxBufferHole: 2.0,
+          // Increase max seek hole to handle larger gaps
+          maxSeekHole: 3.0,
           startLevel: -1,
           // Force more frequent manifest reloads to detect skips faster
           manifestLoadingTimeOut: 10000,
@@ -61,8 +63,7 @@
           // Increased retries for buffer holes
           fragLoadingMaxRetry: 6,
           fragLoadingRetryDelay: 500,
-          // Prevent aggressive seeking that causes buffer starvation
-          maxSeekHole: 2,
+          // Prevent aggressive seeking that causes buffer starvation (handled above)
           // Ensure we maintain buffer ahead of playback
           liveMinLatencyDuration: 6
         };
@@ -571,6 +572,14 @@
         });
         
         hls.on(Hls.Events.ERROR, function (event, data) {
+          // Handle non-fatal buffer hole errors gracefully
+          if (data.type === 'mediaError' && data.details === 'bufferSeekOverHole') {
+            // This is expected during transitions/discontinuities
+            // HLS.js will handle it automatically, just log for debugging
+            console.log('Buffer hole detected (expected during transitions):', data.reason || 'seeking over gap');
+            return;
+          }
+          
           console.error('HLS error', event, data);
           if (data.fatal) {
             switch(data.type) {

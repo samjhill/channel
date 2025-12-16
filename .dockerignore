@@ -1,9 +1,58 @@
+# Git
 .git
-.venv
-node_modules
-ui/channel-admin/node_modules
-client/web_test/node_modules
-server/hls
+.gitignore
+
+# Python
 __pycache__
 *.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.venv
+venv
+env
 
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation
+*.md
+!README.md
+
+# Tests
+tests/
+test_*.py
+*_test.py
+
+# Development files
+docker-compose.yml
+.dockerignore
+PRODUCTION_*.md
+IMPROVEMENTS.md
+ISSUES.md
+PROJECT_STATUS.md
+
+# Client files (not needed in server container)
+client/
+
+# UI build artifacts (will be built in container if needed)
+ui/channel-admin/node_modules
+ui/channel-admin/dist
+ui/channel-admin/.vite

@@ -9,7 +9,7 @@ async function handleResponse(res) {
     return res.json();
 }
 // Create a fetch wrapper with timeout
-function fetchWithTimeout(url, options = {}, timeout = 10000) {
+function fetchWithTimeout(url, options = {}, timeout = 60000) {
     return Promise.race([
         fetch(url, options),
         new Promise((_, reject) => setTimeout(() => reject(new Error(`Request timeout: ${url}`)), timeout))
@@ -89,5 +89,9 @@ export async function fetchLogs(container = "tvchannel", lines = 500) {
         lines: lines.toString(),
     });
     const res = await fetchWithTimeout(`${API_BASE}/api/logs?${params}`);
+    return handleResponse(res);
+}
+export async function fetchPlaylistGenerationStatus() {
+    const res = await fetchWithTimeout(`${API_BASE}/api/playlist/generation-status`);
     return handleResponse(res);
 }

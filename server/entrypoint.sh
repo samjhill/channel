@@ -1,8 +1,29 @@
 #!/bin/bash
 set -euo pipefail
 
+# Cleanup function for graceful shutdown
+cleanup() {
+    echo "Shutting down gracefully..."
+    # Kill any remaining FFmpeg processes
+    pkill -9 ffmpeg 2>/dev/null || true
+    exit 0
+}
+
+trap cleanup SIGTERM SIGINT
+
 # Start nginx first so the HLS endpoint is available immediately
 service nginx start || true
+
+# Clean up old HLS segments on startup (in case of previous crash)
+echo "Cleaning up old HLS segments..."
+python3 -c "
+import sys
+sys.path.insert(0, '/app')
+from server.stream import cleanup_old_hls_segments
+cleanup_old_hls_segments(max_age_hours=2.0, max_segments=100)
+" || {
+    echo "Warning: Failed to cleanup HLS segments, continuing anyway..."
+}
 
 # Ensure up-next bumper backgrounds are generated before starting
 echo "Checking for up-next bumper backgrounds..."

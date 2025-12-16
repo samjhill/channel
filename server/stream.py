@@ -81,6 +81,10 @@ STREAMER_PID_FILE = HLS_DIR / "streamer.pid"
 
 _lock_file_handle = None
 
+# Track current FFmpeg process to prevent killing active stream
+_current_ffmpeg_process: Optional[subprocess.Popen] = None
+_current_ffmpeg_lock = threading.Lock()
+
 
 def is_bumper_block(entry: str) -> bool:
     """Check if entry is a bumper block marker.
@@ -184,8 +188,8 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
         str(OUTPUT),
     ])
     
-    # Clean up any orphaned FFmpeg processes
-    cleanup_orphaned_ffmpeg_processes()
+    # Clean up any orphaned FFmpeg processes (but not the one we're about to start)
+    cleanup_orphaned_ffmpeg_processes(exclude_pid=None)
     time.sleep(0.5)
     
     try:
@@ -194,6 +198,11 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
             stdout=subprocess.DEVNULL,
             stderr=subprocess.STDOUT,
         )
+        
+        # Track this as the current FFmpeg process
+        global _current_ffmpeg_process
+        with _current_ffmpeg_lock:
+            _current_ffmpeg_process = process
         # Wait for FFmpeg to start and produce first segment before continuing
         # This ensures segments are available when client requests them
         time.sleep(1.0)
@@ -244,18 +253,35 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
                 if playhead_state:
                     playhead_index = playhead_state.get("current_index", -1)
                     playhead_path = playhead_state.get("current_path", "")
+                    playhead_updated_at = playhead_state.get("updated_at", 0)
+                    
                     # Only skip if playhead has moved to a significantly different index
+                    # AND the playhead was updated recently (within last 5 seconds)
+                    # This prevents false positives from stale playhead data
                     if playhead_index >= 0 and playhead_index != index:
-                        # Only skip if the difference is significant (more than 1)
-                        # This allows for minor index differences during normal playback
-                        if abs(playhead_index - index) > 1:
-                            LOGGER.info("Skip detected (playhead index %d != stream index %d), interrupting stream", playhead_index, index)
+                        time_since_update = time.time() - playhead_updated_at
+                        # Only skip if:
+                        # 1. Difference is significant (more than 1)
+                        # 2. Playhead was updated recently (within 5 seconds)
+                        # 3. Playhead path doesn't match current file (to avoid false positives during transitions)
+                        if (abs(playhead_index - index) > 1 and 
+                            time_since_update < 5.0 and
+                            playhead_path != src):
+                            LOGGER.info(
+                                "Skip detected (playhead index %d != stream index %d, updated %.2fs ago), interrupting stream",
+                                playhead_index, index, time_since_update
+                            )
                             process.terminate()
                             try:
                                 process.wait(timeout=5)
                             except subprocess.TimeoutExpired:
                                 process.kill()
                                 process.wait()
+                            # Clear current process tracking
+                            global _current_ffmpeg_process
+                            with _current_ffmpeg_lock:
+                                if _current_ffmpeg_process is process:
+                                    _current_ffmpeg_process = None
                             return False
             
             # Check if FFmpeg is still producing segments (for completion detection)
@@ -268,6 +294,12 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
             time.sleep(0.5)
         
         returncode = process.returncode
+        
+        # Clear current process tracking
+        with _current_ffmpeg_lock:
+            if _current_ffmpeg_process is process:
+                _current_ffmpeg_process = None
+        
         if returncode == 0:
             LOGGER.info("Stream completed successfully: %s", Path(src).name)
             return True
@@ -276,6 +308,11 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
             return False
     except Exception as e:
         LOGGER.error("Failed to stream %s: %s", src, e)
+        # Clear current process tracking on error
+        global _current_ffmpeg_process
+        with _current_ffmpeg_lock:
+            if _current_ffmpeg_process is process:
+                _current_ffmpeg_process = None
         return False
 
 
@@ -506,9 +543,10 @@ def _get_up_next_bumper(episode_path: str) -> Optional[str]:
                     LOGGER.info("_get_up_next_bumper: Generated bumper: %s", Path(up_next_bumper).name)
             except Exception as e:
                 LOGGER.warning("Could not get generic up-next bumper for %s: %s", show_label, e)
-                return None
+                # Don't return None here - continue to try JIT rendering
         
         # If we have episode metadata, render specific-episode bumper JIT
+        # This should be attempted even if generic generation failed
         if metadata:
             LOGGER.info("_get_up_next_bumper: Rendering JIT bumper for %s with metadata %s", show_label, metadata)
             jit_bumper = _render_up_next_bumper_jit(show_label, metadata)
@@ -518,6 +556,11 @@ def _get_up_next_bumper(episode_path: str) -> Optional[str]:
             else:
                 LOGGER.warning("_get_up_next_bumper: JIT bumper rendering failed, using generic: %s", 
                              Path(up_next_bumper).name if up_next_bumper else "None")
+        
+        # Only return None if we have no bumper at all (both generic and JIT failed)
+        if not up_next_bumper:
+            LOGGER.error("_get_up_next_bumper: Failed to get any up-next bumper for %s (generic and JIT both failed)", show_label)
+            return None
         
         LOGGER.info("_get_up_next_bumper: Final bumper for %s: %s", show_label, 
                    Path(up_next_bumper).name if up_next_bumper else "None")
@@ -706,9 +749,37 @@ def pregenerate_next_bumper_block(current_index: int, files: List[str]) -> None:
         if not os.path.exists(next_episode):
             return
         
-        # Get up-next bumper using unified logic
-        up_next_bumper = _get_up_next_bumper(next_episode)
+        # Get up-next bumper using unified logic (with timeout to prevent blocking)
+        import threading
+        import queue
+        
+        up_next_queue = queue.Queue(maxsize=1)
+        
+        def get_bumper():
+            try:
+                bumper = _get_up_next_bumper(next_episode)
+                up_next_queue.put(('success', bumper), timeout=1.0)
+            except Exception as e:
+                try:
+                    up_next_queue.put(('error', e), timeout=1.0)
+                except queue.Full:
+                    pass
+        
+        bumper_thread = threading.Thread(target=get_bumper, daemon=True)
+        bumper_thread.start()
+        
+        up_next_bumper = None
+        try:
+            result_type, result_value = up_next_queue.get(timeout=10.0)
+            if result_type == 'success':
+                up_next_bumper = result_value
+            else:
+                LOGGER.warning("Failed to get up-next bumper for pre-generation: %s", result_value)
+        except queue.Empty:
+            LOGGER.warning("Getting up-next bumper for pre-generation timed out after 10s")
+        
         if not up_next_bumper:
+            LOGGER.warning("Could not get up-next bumper for pre-generation, skipping")
             return
         
         # Check weather probability using unified logic
@@ -734,43 +805,163 @@ def pregenerate_next_bumper_block(current_index: int, files: List[str]) -> None:
         LOGGER.warning("Failed to pre-generate bumper block: %s", e, exc_info=True)
 
 
+# Lock for playhead updates to prevent race conditions
+_playhead_update_lock = threading.Lock()
+
 def update_playhead(path: str, index: int, playlist_mtime: float) -> None:
-    """Update playhead state."""
+    """Update playhead state (thread-safe).
+    
+    Args:
+        path: Path to current entry (episode or marker)
+        index: Index in playlist
+        playlist_mtime: Playlist modification time (for consistency checking)
+    """
     try:
-        state = {
-            "current_path": path,
-            "current_index": index,
-            "playlist_mtime": playlist_mtime,
-            "playlist_path": str(resolve_playlist_path()),
-            "entry_type": entry_type(path),
-            "updated_at": time.time(),
-        }
-        save_playhead_state(state)
+        with _playhead_update_lock:
+            state = {
+                "current_path": path,
+                "current_index": index,
+                "playlist_mtime": playlist_mtime,
+                "playlist_path": str(resolve_playlist_path()),
+                "entry_type": entry_type(path),
+                "updated_at": time.time(),
+            }
+            save_playhead_state(state)
+            LOGGER.debug("Updated playhead: index=%d, path=%s", index, Path(path).name if path else "marker")
     except Exception as e:
         LOGGER.warning("Failed to update playhead: %s", e)
 
 
-def cleanup_orphaned_ffmpeg_processes() -> None:
-    """Kill any FFmpeg processes streaming to our HLS output."""
+def cleanup_old_hls_segments(max_age_hours: float = 2.0, max_segments: int = 100) -> None:
+    """Clean up old HLS segments to prevent disk space issues.
+    
+    Args:
+        max_age_hours: Maximum age of segments to keep (default: 2 hours)
+        max_segments: Maximum number of segments to keep (default: 100)
+    
+    This is safe to run periodically as FFmpeg's delete_segments flag handles
+    active segments. We only clean up truly orphaned segments.
+    """
     try:
+        if not HLS_DIR.exists():
+            return
+        
+        current_time = time.time()
+        max_age_seconds = max_age_hours * 3600
+        
+        # Find all segment files
+        segment_files = list(HLS_DIR.glob("stream*.ts"))
+        preview_files = list(HLS_DIR.glob("preview_block_*.mp4"))
+        
+        if not segment_files:
+            return
+        
+        # Sort by modification time (newest first)
+        segment_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        
+        deleted_count = 0
+        total_size_freed = 0
+        
+        # Keep the newest segments (within age limit and count limit)
+        segments_to_keep = []
+        for segment in segment_files:
+            age = current_time - segment.stat().st_mtime
+            if age < max_age_seconds and len(segments_to_keep) < max_segments:
+                segments_to_keep.append(segment)
+        
+        # Delete old segments
+        for segment in segment_files:
+            if segment not in segments_to_keep:
+                try:
+                    size = segment.stat().st_size
+                    segment.unlink()
+                    deleted_count += 1
+                    total_size_freed += size
+                except Exception as e:
+                    LOGGER.debug("Failed to delete old segment %s: %s", segment.name, e)
+        
+        # Clean up old preview files (keep only the 5 most recent)
+        if preview_files:
+            preview_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for preview in preview_files[5:]:  # Keep 5 most recent
+                try:
+                    age = current_time - preview.stat().st_mtime
+                    if age > max_age_seconds:
+                        size = preview.stat().st_size
+                        preview.unlink()
+                        deleted_count += 1
+                        total_size_freed += size
+                except Exception as e:
+                    LOGGER.debug("Failed to delete old preview %s: %s", preview.name, e)
+        
+        if deleted_count > 0:
+            size_mb = total_size_freed / (1024 * 1024)
+            LOGGER.info(
+                "Cleaned up %d old HLS segments/previews (freed %.2f MB)",
+                deleted_count,
+                size_mb
+            )
+    except Exception as e:
+        LOGGER.warning("Failed to cleanup old HLS segments: %s", e)
+
+
+def cleanup_orphaned_ffmpeg_processes(exclude_pid: Optional[int] = None) -> None:
+    """Kill any FFmpeg processes streaming to our HLS output, excluding the current active process.
+    
+    Args:
+        exclude_pid: PID of the current active FFmpeg process to exclude from cleanup
+    """
+    global _current_ffmpeg_process
+    
+    try:
+        # First, check if we have a tracked current process
+        with _current_ffmpeg_lock:
+            current_pid = _current_ffmpeg_process.pid if _current_ffmpeg_process and _current_ffmpeg_process.poll() is None else None
+            if current_pid:
+                exclude_pid = current_pid
+        
         result = subprocess.run(
             ["ps", "aux"],
             capture_output=True,
             text=True,
             timeout=5,
         )
+        killed_count = 0
         for line in result.stdout.split("\n"):
             if "ffmpeg" in line.lower() and "stream.m3u8" in line:
                 parts = line.split()
                 if len(parts) > 1:
                     try:
                         pid = int(parts[1])
-                        os.kill(pid, signal.SIGKILL)
+                        # Don't kill the current active process
+                        if exclude_pid and pid == exclude_pid:
+                            LOGGER.debug("Skipping cleanup of current active FFmpeg process %d", pid)
+                            continue
+                        
+                        # Check if process is still running
+                        try:
+                            os.kill(pid, 0)  # Check if process exists
+                        except ProcessLookupError:
+                            continue  # Process already dead
+                        
+                        # Kill orphaned process
+                        os.kill(pid, signal.SIGTERM)  # Try graceful termination first
+                        time.sleep(0.2)  # Brief wait
+                        try:
+                            os.kill(pid, 0)  # Check if still running
+                            os.kill(pid, signal.SIGKILL)  # Force kill if still running
+                        except ProcessLookupError:
+                            pass  # Already terminated
+                        
+                        killed_count += 1
                         LOGGER.debug("Killed orphaned FFmpeg process %d", pid)
-                    except (ValueError, ProcessLookupError):
+                    except (ValueError, ProcessLookupError, PermissionError):
                         pass
-    except Exception:
-        pass
+        
+        if killed_count > 0:
+            LOGGER.info("Cleaned up %d orphaned FFmpeg process(es)", killed_count)
+    except Exception as e:
+        LOGGER.debug("Failed to cleanup orphaned FFmpeg processes: %s", e)
     
 
 def acquire_streamer_lock() -> bool:
@@ -819,6 +1010,16 @@ def cleanup_on_exit() -> None:
 def run_stream() -> None:
     """Main streaming loop - clean and simple."""
     current_index = 0
+    
+    # Start pre-generation thread early
+    try:
+        from server.bumper_block import get_generator
+        generator = get_generator()
+        if not generator._pregen_thread or not generator._pregen_thread.is_alive():
+            LOGGER.info("Starting bumper block pre-generation thread at stream startup")
+            generator.start_pregen_thread()
+    except Exception as e:
+        LOGGER.warning("Failed to start pre-generation thread: %s", e)
 
     while True:
         try:
@@ -844,6 +1045,54 @@ def run_stream() -> None:
 
             files = valid_files
             LOGGER.info("Filtered to %d valid entries", len(files))
+            
+            # Pre-generate blocks for upcoming episodes when playlist loads
+            # This ensures blocks are ready before they're needed
+            try:
+                from server.bumper_block import get_generator
+                generator = get_generator()
+                
+                # Ensure pre-generation thread is running
+                if not generator._pregen_thread or not generator._pregen_thread.is_alive():
+                    LOGGER.info("Starting bumper block pre-generation thread")
+                    generator.start_pregen_thread()
+                
+                # Pre-generate blocks for the next 3 episodes that have bumper blocks
+                pregen_count = 0
+                for idx in range(len(files)):
+                    if is_bumper_block(files[idx]):
+                        # Find the episode after this bumper block
+                        ep_idx = idx + 1
+                        while ep_idx < len(files) and not is_episode_entry(files[ep_idx]):
+                            ep_idx += 1
+                        
+                        if ep_idx < len(files) and os.path.exists(files[ep_idx]):
+                            # Check if already queued or cached
+                            episode_path = files[ep_idx]
+                            with generator._pregen_lock:
+                                already_cached = episode_path in generator._blocks_by_episode
+                                # Also check if already queued
+                                already_queued = any(
+                                    q.get("episode_path") == episode_path
+                                    for q in generator._pregen_queue
+                                )
+                            
+                            if not already_cached and not already_queued:
+                                # Queue for pre-generation (use idx-1 as the "current" index before bumper)
+                                pregenerate_next_bumper_block(max(0, idx - 1), files)
+                                pregen_count += 1
+                                if pregen_count >= 3:  # Limit to 3 to avoid overwhelming the queue
+                                    break
+                            else:
+                                LOGGER.debug(
+                                    "Skipping pre-generation for episode %s (already cached or queued)",
+                                    Path(episode_path).name
+                                )
+                
+                if pregen_count > 0:
+                    LOGGER.info("Pre-queued %d bumper blocks for upcoming episodes", pregen_count)
+            except Exception as e:
+                LOGGER.debug("Failed to pre-generate blocks on playlist load: %s", e)
 
             # Get current position from playhead
             # First, check what FFmpeg is actually streaming (if anything)
@@ -1033,12 +1282,19 @@ def run_stream() -> None:
                     # Episode completed successfully
                     LOGGER.info("Episode completed successfully: %s", Path(entry).name)
                     
-                    # Update playhead to next entry BEFORE advancing
-                    # This ensures playhead is updated before we advance
+                    # Mark as watched first (before updating playhead)
+                    try:
+                        mark_episode_watched(entry)
+                    except Exception as e:
+                        LOGGER.debug("Failed to mark episode as watched: %s", e)
+                    
+                    # Calculate next index
                     next_index = current_index + 1
                     if next_index >= len(files):
                         next_index = 0
                     
+                    # Update playhead to next entry BEFORE advancing
+                    # This ensures playhead is updated before we advance and prevents skip detection issues
                     if next_index < len(files):
                         next_entry = files[next_index]
                         # Update playhead to next entry (could be bumper block or episode)
@@ -1048,27 +1304,58 @@ def run_stream() -> None:
                         elif is_episode_entry(next_entry):
                             # Next is an episode - update playhead to episode
                             update_playhead(next_entry, next_index, playlist_mtime)
-                    
-                    # Mark as watched
-                    try:
-                        mark_episode_watched(entry)
-                    except Exception:
-                        pass
+                        else:
+                            # Unknown entry type, update playhead anyway
+                            update_playhead(next_entry if next_entry else "", next_index, playlist_mtime)
                     
                     # Advance to next entry
                     current_index = next_index
                     LOGGER.info("Episode completed, advancing to index %d", current_index)
+                    
+                    # Small delay to ensure playhead update is persisted
+                    time.sleep(0.1)
                 else:
                     # Stream failed, skip to next
-                    LOGGER.warning("Stream failed, skipping to next")
-                    current_index += 1
-                    if current_index >= len(files):
+                    LOGGER.warning("Stream failed for %s, skipping to next", Path(entry).name)
+                    
+                    # Find next valid entry (episode or bumper block)
+                    next_index = current_index + 1
+                    max_search = len(files)  # Prevent infinite loop
+                    search_count = 0
+                    
+                    while search_count < max_search:
+                        if next_index >= len(files):
+                            next_index = 0
+                        
+                        if next_index < len(files):
+                            next_entry = files[next_index]
+                            # Accept episode, bumper block, or weather bumper
+                            if (is_episode_entry(next_entry) or 
+                                is_bumper_block(next_entry) or 
+                                is_weather_bumper(next_entry)):
+                                current_index = next_index
+                                # Update playhead to new position
+                                update_playhead(
+                                    next_entry if is_episode_entry(next_entry) else "",
+                                    current_index,
+                                    playlist_mtime
+                                )
+                                LOGGER.info("Stream failed, advanced to index %d", current_index)
+                                break
+                        
+                        next_index += 1
+                        search_count += 1
+                    
+                    if search_count >= max_search:
+                        LOGGER.error("Could not find valid next entry after stream failure, resetting to start")
                         current_index = 0
-                    # Update playhead to new position
-                    if current_index < len(files):
-                        next_entry = files[current_index]
-                        if is_episode_entry(next_entry) or is_bumper_block(next_entry) or is_weather_bumper(next_entry):
-                            update_playhead(next_entry if is_episode_entry(next_entry) else "", current_index, playlist_mtime)
+                        if len(files) > 0:
+                            first_entry = files[0]
+                            update_playhead(
+                                first_entry if is_episode_entry(first_entry) else "",
+                                0,
+                                playlist_mtime
+                            )
             
             # Handle bumper block
             elif is_bumper_block(entry):
@@ -1161,10 +1448,35 @@ def run_stream() -> None:
                         current_index = next_episode_idx
                         if current_index >= len(files):
                             current_index = 0
-                        if current_index < len(files):
-                            next_entry = files[current_index]
-                            if is_episode_entry(next_entry):
-                                update_playhead(next_entry, current_index, playlist_mtime)
+                        
+                        # Find valid episode entry
+                        max_search = len(files)
+                        search_count = 0
+                        found_episode = False
+                        while search_count < max_search and not found_episode:
+                            if current_index >= len(files):
+                                current_index = 0
+                            
+                            if current_index < len(files):
+                                next_entry = files[current_index]
+                                if is_episode_entry(next_entry):
+                                    update_playhead(next_entry, current_index, playlist_mtime)
+                                    found_episode = True
+                                    LOGGER.info("Missing bumpers, advanced to episode at index %d", current_index)
+                                    break
+                                elif is_bumper_block(next_entry) or is_weather_bumper(next_entry):
+                                    current_index += 1
+                                else:
+                                    current_index += 1
+                            
+                            search_count += 1
+                        
+                        if not found_episode:
+                            LOGGER.error("Could not find valid episode after missing bumpers, resetting to start")
+                            current_index = 0
+                            if len(files) > 0 and is_episode_entry(files[0]):
+                                update_playhead(files[0], 0, playlist_mtime)
+                        
                         continue
                     
                     # Stream all bumpers sequentially
@@ -1195,6 +1507,21 @@ def run_stream() -> None:
                     if bumper_success:
                         LOGGER.info("✓✓✓ BUMPER BLOCK COMPLETED SUCCESSFULLY ✓✓✓")
                         try:
+                            # Wait a brief moment for FFmpeg to finish writing final segments
+                            time.sleep(0.5)
+                            
+                            # Stop any FFmpeg processes that might still be streaming bumpers
+                            # Exclude the current process if it's still running (shouldn't be, but be safe)
+                            global _current_ffmpeg_process
+                            exclude_pid = None
+                            with _current_ffmpeg_lock:
+                                if _current_ffmpeg_process and _current_ffmpeg_process.poll() is None:
+                                    exclude_pid = _current_ffmpeg_process.pid
+                            cleanup_orphaned_ffmpeg_processes(exclude_pid=exclude_pid)
+                            
+                            # Additional brief wait to ensure cleanup completed
+                            time.sleep(0.3)
+                            
                             # Advance to the episode that this bumper block was promoting
                             current_index = next_episode_idx
                             if current_index >= len(files):
@@ -1224,13 +1551,15 @@ def run_stream() -> None:
                                         if len(files) > 0 and is_episode_entry(files[0]):
                                             update_playhead(files[0], 0, playlist_mtime)
                             
-                            # IMPORTANT: Break out of the loop iteration and let it reload the playlist
-                            # This ensures the playhead update is visible and prevents replaying the bumper block
-                            LOGGER.info("Bumper block complete, breaking to reload playlist with updated playhead")
+                            # IMPORTANT: Break to reload playlist with updated playhead
+                            # The playhead is now pointing to the episode, so the next loop iteration will find it
+                            # and start streaming it immediately
+                            LOGGER.info("Bumper block complete, breaking to reload playlist and stream episode at index %d", current_index)
+                            break
                         except Exception as e:
                             LOGGER.error("Failed to update playhead after bumper block: %s", e, exc_info=True)
-                        # Break to reload playlist with updated playhead
-                        break
+                            # If update failed, break to reload playlist
+                            break
                     else:
                         LOGGER.warning("Bumper block failed, skipping to next episode")
                         current_index = next_episode_idx
@@ -1292,10 +1621,15 @@ if __name__ == "__main__":
         LOGGER.error("Another streamer is already running. Exiting.")
         sys.exit(1)
     
-    # Clean up orphaned processes
-    cleanup_orphaned_ffmpeg_processes()
-    cleanup_orphaned_ffmpeg_processes()
-    time.sleep(1)
+    # Clean up old HLS segments on startup
+    LOGGER.info("Cleaning up old HLS segments on startup...")
+    cleanup_old_hls_segments(max_age_hours=2.0, max_segments=100)
+    
+    # Clean up orphaned processes (multiple passes to ensure cleanup)
+    cleanup_orphaned_ffmpeg_processes(exclude_pid=None)
+    time.sleep(0.5)
+    cleanup_orphaned_ffmpeg_processes(exclude_pid=None)
+    time.sleep(0.5)
     
     # Write PID
     try:

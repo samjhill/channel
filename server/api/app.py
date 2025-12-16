@@ -114,11 +114,72 @@ def health_check() -> Dict[str, Any]:
     """Health check endpoint that verifies streaming processes are running."""
     import subprocess
     
+    # Try to import psutil for resource monitoring (optional)
+    try:
+        import psutil
+        psutil_available = True
+    except ImportError:
+        psutil_available = False
+    
     health_status = {
         "status": "ok",
         "timestamp": time.time(),
         "checks": {},
+        "resources": {},
     }
+    
+    # Check resource usage (if psutil is available)
+    if psutil_available:
+        try:
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            cpu_percent = process.cpu_percent(interval=0.1)
+            
+            health_status["resources"] = {
+                "memory_mb": round(memory_info.rss / (1024 * 1024), 2),
+                "memory_percent": round(process.memory_percent(), 2),
+                "cpu_percent": round(cpu_percent, 2),
+            }
+            
+            # Check disk usage for HLS directory
+            try:
+                hls_dir = _resolve_hls_dir()
+                if hls_dir.exists():
+                    disk_usage = psutil.disk_usage(str(hls_dir))
+                    health_status["resources"]["disk"] = {
+                        "total_gb": round(disk_usage.total / (1024**3), 2),
+                        "used_gb": round(disk_usage.used / (1024**3), 2),
+                        "free_gb": round(disk_usage.free / (1024**3), 2),
+                        "percent": round(disk_usage.percent, 2),
+                    }
+                    
+                    # Count HLS segments
+                    segment_count = len(list(hls_dir.glob("stream*.ts")))
+                    health_status["resources"]["hls_segments"] = segment_count
+                    
+                    # Warn if disk usage is high
+                    if disk_usage.percent > 90:
+                        health_status["status"] = "degraded"
+                        health_status["checks"]["disk"] = {
+                            "status": "warning",
+                            "message": f"Disk usage at {disk_usage.percent}%",
+                        }
+            except Exception as e:
+                LOGGER.debug("Failed to check disk usage: %s", e)
+            
+            # Warn if memory usage is very high
+            if process.memory_percent() > 90:
+                health_status["status"] = "degraded"
+                health_status["checks"]["memory"] = {
+                    "status": "warning",
+                    "message": f"Memory usage at {process.memory_percent():.1f}%",
+                }
+        except Exception as e:
+            LOGGER.debug("Failed to check resource usage: %s", e)
+            health_status["resources"] = {"error": str(e)}
+    else:
+        # psutil not available, skip resource checks
+        health_status["resources"] = {"note": "psutil not available"}
     
     # Check if playlist file exists and is recent (updated in last 5 minutes)
     try:

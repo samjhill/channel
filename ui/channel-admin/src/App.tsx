@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   ChannelConfig,
   PlaybackMode,
@@ -22,8 +23,14 @@ function cloneChannel(channel: ChannelConfig | null): ChannelConfig | null {
 }
 
 function App() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  
+  // Get view and channel from URL, with defaults
+  const viewFromUrl = searchParams.get("view") as "settings" | "playlist" | "bumpers" | "preview" | "logs" | null;
+  const channelFromUrl = searchParams.get("channel") || "";
+  
   const [channels, setChannels] = useState<ChannelConfig[]>([]);
-  const [selectedId, setSelectedId] = useState<string>("");
+  const [selectedId, setSelectedId] = useState<string>(channelFromUrl);
   const [currentChannel, setCurrentChannel] = useState<ChannelConfig | null>(null);
   const [initialChannel, setInitialChannel] = useState<ChannelConfig | null>(null);
   const [loading, setLoading] = useState(false);
@@ -31,14 +38,53 @@ function App() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [activeView, setActiveView] = useState<"settings" | "playlist" | "bumpers" | "preview" | "logs">("playlist");
+  const [activeView, setActiveView] = useState<"settings" | "playlist" | "bumpers" | "preview" | "logs">(
+    viewFromUrl || "playlist"
+  );
+  
+  // Sync activeView with URL when URL changes (e.g., browser back/forward)
+  useEffect(() => {
+    if (viewFromUrl && viewFromUrl !== activeView) {
+      setActiveView(viewFromUrl);
+    }
+  }, [viewFromUrl, activeView]);
+  
+  // Update URL when view changes
+  const handleViewChange = (view: "settings" | "playlist" | "bumpers" | "preview" | "logs") => {
+    setActiveView(view);
+    const newParams = new URLSearchParams(searchParams);
+    newParams.set("view", view);
+    setSearchParams(newParams, { replace: true });
+  };
+  
+  // Update URL when channel changes
+  const handleChannelSelect = (channelId: string) => {
+    setSelectedId(channelId);
+    const newParams = new URLSearchParams(searchParams);
+    if (channelId) {
+      newParams.set("channel", channelId);
+    } else {
+      newParams.delete("channel");
+    }
+    setSearchParams(newParams, { replace: true });
+  };
 
   useEffect(() => {
     fetchChannels()
       .then((list) => {
         setChannels(list);
-        if (list.length > 0) {
-          setSelectedId(list[0].id);
+        // If URL has a channel ID, use it; otherwise use first channel
+        if (channelFromUrl && list.some(ch => ch.id === channelFromUrl)) {
+          setSelectedId(channelFromUrl);
+        } else if (list.length > 0) {
+          const firstId = list[0].id;
+          setSelectedId(firstId);
+          // Update URL with first channel if none was specified
+          if (!channelFromUrl) {
+            const newParams = new URLSearchParams(searchParams);
+            newParams.set("channel", firstId);
+            setSearchParams(newParams, { replace: true });
+          }
         }
       })
       .catch((err) => setError(err.message));
@@ -210,38 +256,38 @@ function App() {
           <ChannelSelector
             channels={channels}
             selectedId={selectedId}
-            onSelect={setSelectedId}
+            onSelect={handleChannelSelect}
             disabled={loading}
           />
         </div>
         <div className="view-switch">
           <button
             className={`tab-button ${activeView === "settings" ? "active" : ""}`}
-            onClick={() => setActiveView("settings")}
+            onClick={() => handleViewChange("settings")}
           >
             Channel Settings
           </button>
           <button
             className={`tab-button ${activeView === "playlist" ? "active" : ""}`}
-            onClick={() => setActiveView("playlist")}
+            onClick={() => handleViewChange("playlist")}
           >
             Playlist Management
           </button>
           <button
             className={`tab-button ${activeView === "bumpers" ? "active" : ""}`}
-            onClick={() => setActiveView("bumpers")}
+            onClick={() => handleViewChange("bumpers")}
           >
             Bumper Management
           </button>
           <button
             className={`tab-button ${activeView === "preview" ? "active" : ""}`}
-            onClick={() => setActiveView("preview")}
+            onClick={() => handleViewChange("preview")}
           >
             Bumper Preview
           </button>
           <button
             className={`tab-button ${activeView === "logs" ? "active" : ""}`}
-            onClick={() => setActiveView("logs")}
+            onClick={() => handleViewChange("logs")}
           >
             Log Monitor
           </button>
