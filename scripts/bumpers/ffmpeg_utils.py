@@ -38,9 +38,12 @@ def run_ffmpeg(
         if result.returncode != 0:
             error_msg = f"{description} failed with return code {result.returncode}"
             if result.stderr:
-                error_msg += f"\nFFmpeg stderr:\n{result.stderr}"
+                # Include last 1000 chars of stderr (most relevant errors are at the end)
+                stderr_preview = result.stderr[-1000:] if len(result.stderr) > 1000 else result.stderr
+                error_msg += f"\nFFmpeg stderr (last 1000 chars):\n{stderr_preview}"
             if result.stdout:
-                error_msg += f"\nFFmpeg stdout:\n{result.stdout}"
+                stdout_preview = result.stdout[-500:] if len(result.stdout) > 500 else result.stdout
+                error_msg += f"\nFFmpeg stdout (last 500 chars):\n{stdout_preview}"
             raise RuntimeError(error_msg)
 
     except subprocess.TimeoutExpired:
