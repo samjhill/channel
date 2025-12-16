@@ -1603,10 +1603,20 @@ def get_next_bumper_preview() -> Dict[str, Any]:
         raise
     except Exception as exc:
         error_msg = error_details.get("error", str(exc))
-        LOGGER.exception("Failed to build bumper preview: %s", exc)
+        error_type = type(exc).__name__
+        LOGGER.exception("Failed to build bumper preview: %s (%s)", exc, error_type)
         if error_details.get("traceback"):
             LOGGER.error("Full traceback:\n%s", error_details["traceback"])
-        raise HTTPException(status_code=500, detail=f"Failed to build bumper preview: {error_msg}") from exc
+        # Provide more specific error messages based on exception type
+        if isinstance(exc, ValueError):
+            detail_msg = str(exc) if str(exc) else "Invalid request or missing data"
+        elif isinstance(exc, FileNotFoundError):
+            detail_msg = str(exc) if str(exc) else "Required files not found"
+        elif isinstance(exc, RuntimeError):
+            detail_msg = str(exc) if str(exc) else "Preview generation failed"
+        else:
+            detail_msg = f"{error_type}: {error_msg}" if error_msg else f"{error_type}: Unknown error"
+        raise HTTPException(status_code=500, detail=detail_msg) from exc
 
 
 @app.get("/api/bumper-preview/video")
