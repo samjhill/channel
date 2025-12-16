@@ -48,7 +48,7 @@ fi
 echo "   ✓ Build successful"
 echo ""
 
-echo "4. Starting container..."
+echo "5. Starting container..."
 $COMPOSE_CMD -f docker-compose.truenas.yml up -d
 
 if [ $? -eq 0 ]; then
