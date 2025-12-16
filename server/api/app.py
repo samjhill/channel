@@ -1495,8 +1495,22 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
     LOGGER.info("Preview: Generating preview video with bumpers: %s", 
               [Path(b).name for b in block.bumpers])
     
+    # Verify all bumper files exist before attempting to generate preview
+    missing_bumpers = []
+    for bumper_path in block.bumpers:
+        if not Path(bumper_path).exists():
+            missing_bumpers.append(bumper_path)
+    
+    if missing_bumpers:
+        LOGGER.error("Preview: Missing bumper files: %s", missing_bumpers)
+        raise FileNotFoundError(f"Missing bumper files: {', '.join([Path(b).name for b in missing_bumpers])}")
+    
     # Generate preview video from the pre-generated block (has its own timeout)
-    preview_path = _generate_preview_video(block.bumpers)
+    try:
+        preview_path = _generate_preview_video(block.bumpers)
+    except Exception as e:
+        LOGGER.error("Preview: Failed to generate preview video: %s", e, exc_info=True)
+        raise RuntimeError(f"Failed to generate preview video: {str(e)}") from e
     
     bumpers_summary = [
         {
