@@ -35,19 +35,36 @@ def resolve_assets_root() -> Path:
 
 
 def get_up_next_background_path(background_id: Optional[int] = None) -> Optional[Path]:
-    """Get the path to a pre-generated next-up background video."""
+    """Get the path to a pre-generated next-up background video.
+    
+    Validates that the background file exists and is not empty (corrupted).
+    """
     assets_root = resolve_assets_root()
     backgrounds_dir = assets_root / "bumpers" / "up_next" / "backgrounds"
     
+    def is_valid_background(bg_path: Path) -> bool:
+        """Check if background file exists and is not empty/corrupted."""
+        if not bg_path.exists():
+            return False
+        # Check file size - should be at least 1MB for a valid video
+        try:
+            size_mb = bg_path.stat().st_size / (1024 * 1024)
+            if size_mb < 1.0:
+                print(f"[Up Next] Warning: Background {bg_path.name} is too small ({size_mb:.1f} MB), skipping", file=sys.stderr)
+                return False
+            return True
+        except OSError:
+            return False
+    
     if background_id is not None:
         bg_path = backgrounds_dir / f"bg_{background_id:02d}.mp4"
-        if bg_path.exists():
+        if is_valid_background(bg_path):
             return bg_path
     
-    # Try to find any available background
+    # Try to find any available valid background
     for bg_id in range(10):  # Check up to 10 backgrounds
         bg_path = backgrounds_dir / f"bg_{bg_id:02d}.mp4"
-        if bg_path.exists():
+        if is_valid_background(bg_path):
             return bg_path
     
     return None
