@@ -115,26 +115,46 @@ Edit `docker-compose.truenas.yml`:
    ```
    Replace `YOUR_TRUENAS_IP` with your TrueNAS IP address
 
-### 5. Deploy via TrueNAS Apps
+### 5. Deploy the Application
 
-1. **Access TrueNAS Web UI**
-   - Navigate to `http://your-truenas-ip`
-   - Log in
+**⚠️ Important**: TrueNAS Scale's Apps UI doesn't support `build` context in docker-compose YAML. Use command-line deployment:
 
-2. **Install Custom App**
-   - Go to **Apps** → **Discover Apps**
-   - Click **⋮** (three dots) → **Install via YAML**
+#### Option A: Command Line Deployment (Recommended)
 
-3. **Configure App**
-   - **Name**: `tvchannel`
-   - **Custom Config**: Copy contents of `docker-compose.truenas.yml`
-   - **Storage**: Map your datasets to container paths
-   - **Network**: Expose port 8080
-   - **Resources**: 4GB RAM, 4 CPUs
+```bash
+# SSH into TrueNAS
+ssh root@your-truenas-ip
 
-4. **Deploy**
-   - Click **Save**
-   - Wait for deployment
+# Navigate to app directory
+cd /mnt/blackhole/apps/tvchannel
+
+# Pull latest code (if needed)
+git pull
+
+# Use the deployment script
+chmod +x deploy-truenas-cli.sh
+./deploy-truenas-cli.sh
+
+# Or manually:
+docker build -t tvchannel:latest -f server/Dockerfile .
+docker-compose -f docker-compose.truenas.yml up -d
+```
+
+#### Option B: TrueNAS Apps UI (After Building Image)
+
+If you prefer the UI, build the image first, then use `docker-compose.truenas-built.yml`:
+
+1. **Build the image first** (via command line):
+   ```bash
+   cd /mnt/blackhole/apps/tvchannel
+   docker build -t tvchannel:latest -f server/Dockerfile .
+   ```
+
+2. **Deploy via UI**:
+   - Go to **Apps** → **Discover Apps** → **⋮** → **Install via YAML**
+   - Copy contents of `docker-compose.truenas-built.yml` (uses `image:` instead of `build:`)
+   - Configure storage and networking
+   - Deploy
 
 ### 6. Verify Media Access
 

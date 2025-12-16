@@ -1,0 +1,77 @@
+#!/bin/bash
+# Deploy TV Channel to TrueNAS Scale via command line
+# This avoids the build context issue with TrueNAS Apps UI
+
+set -euo pipefail
+
+echo "========================================="
+echo "TV Channel - TrueNAS Scale Deployment"
+echo "========================================="
+echo ""
+
+# Configuration
+POOL_NAME="${POOL_NAME:-blackhole}"
+APP_DIR="/mnt/${POOL_NAME}/apps/tvchannel"
+COMPOSE_FILE="${APP_DIR}/docker-compose.truenas.yml"
+
+# Colors
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+RED='\033[0;31m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Check if running as root
+if [ "$EUID" -ne 0 ]; then 
+    echo -e "${RED}Please run as root (use sudo)${NC}"
+    exit 1
+fi
+
+# Check if app directory exists
+if [ ! -d "$APP_DIR" ]; then
+    echo -e "${RED}Error: App directory not found: $APP_DIR${NC}"
+    echo "Please run the setup script first: POOL_NAME=${POOL_NAME} ./truenas-setup.sh"
+    exit 1
+fi
+
+cd "$APP_DIR"
+
+# Check if docker-compose file exists
+if [ ! -f "$COMPOSE_FILE" ]; then
+    echo -e "${RED}Error: docker-compose file not found: $COMPOSE_FILE${NC}"
+    echo "Please ensure docker-compose.truenas.yml is in the app directory"
+    exit 1
+fi
+
+echo -e "${BLUE}Building Docker image...${NC}"
+docker build -t tvchannel:latest -f server/Dockerfile . || {
+    echo -e "${RED}Error: Failed to build Docker image${NC}"
+    exit 1
+}
+
+echo -e "${GREEN}Image built successfully!${NC}"
+echo ""
+
+echo -e "${BLUE}Starting container with docker-compose...${NC}"
+docker-compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+docker-compose -f "$COMPOSE_FILE" up -d || {
+    echo -e "${RED}Error: Failed to start container${NC}"
+    exit 1
+}
+
+echo ""
+echo -e "${GREEN}Deployment complete!${NC}"
+echo ""
+echo "Container status:"
+docker-compose -f "$COMPOSE_FILE" ps
+
+echo ""
+echo "To view logs:"
+echo "  docker-compose -f $COMPOSE_FILE logs -f"
+echo ""
+echo "To stop:"
+echo "  docker-compose -f $COMPOSE_FILE down"
+echo ""
+echo "Stream URL:"
+echo "  http://$(hostname -I | awk '{print $1}'):8080/channel/stream.m3u8"
+
