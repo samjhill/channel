@@ -122,7 +122,9 @@ def reset_hls_output(reason: str = "") -> None:
         # FFmpeg will append new segments, and old segments will be cleaned up
         # by FFmpeg's delete_segments flag once they're out of the window
         with open(OUTPUT, "w", encoding="utf-8") as playlist:
-            playlist.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-DISCONTINUITY\n")
+            # Write minimal valid HLS playlist header
+            # FFmpeg will add segments and its own discontinuity marker via discont_start flag
+            playlist.write("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:6\n#EXT-X-INDEPENDENT-SEGMENTS\n")
         if reason:
             LOGGER.info("Reset HLS playlist (%s)", reason)
     except Exception as exc:
