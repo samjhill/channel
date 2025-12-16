@@ -125,7 +125,7 @@ export default function BumperManager() {
   };
 
   const handleAddMessage = () => {
-    if (!config || !newMessage.trim()) return;
+    if (!config || !config.messages || !newMessage.trim()) return;
     setConfig({
       ...config,
       messages: [...config.messages, newMessage.trim()]
@@ -134,7 +134,7 @@ export default function BumperManager() {
   };
 
   const handleEditMessage = (index: number, newText: string) => {
-    if (!config) return;
+    if (!config || !config.messages) return;
     const updated = [...config.messages];
     updated[index] = newText;
     setConfig({ ...config, messages: updated });
@@ -142,7 +142,7 @@ export default function BumperManager() {
   };
 
   const handleDeleteMessage = (index: number) => {
-    if (!config) return;
+    if (!config || !config.messages) return;
     if (window.confirm("Delete this message?")) {
       const updated = config.messages.filter((_, i) => i !== index);
       setConfig({ ...config, messages: updated });
@@ -150,7 +150,7 @@ export default function BumperManager() {
   };
 
   const handleMoveMessage = (index: number, direction: "up" | "down") => {
-    if (!config) return;
+    if (!config || !config.messages) return;
     const newIndex = direction === "up" ? index - 1 : index + 1;
     if (newIndex < 0 || newIndex >= config.messages.length) return;
     const updated = [...config.messages];
