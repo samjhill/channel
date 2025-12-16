@@ -1484,10 +1484,20 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
         if result_type == 'success':
             info = result_value
         else:
-            raise result_value
+            # Log the full error before raising
+            error_exc = result_value
+            LOGGER.error("Preview: Bumper block finding failed: %s", error_exc, exc_info=True)
+            raise error_exc
     except queue.Empty:
         LOGGER.error("Preview: Bumper block finding timed out after 20s")
         raise RuntimeError("Preview generation timed out - bumper block resolution took too long. Try again later when blocks are pre-generated.")
+    except ValueError as exc:
+        # No bumper blocks found - provide helpful error message
+        error_msg = str(exc)
+        if "No upcoming bumper blocks" in error_msg or "No segments found" in error_msg:
+            LOGGER.warning("Preview: %s - This may be because no bumper blocks have been generated yet", error_msg)
+            raise ValueError("No bumper blocks available for preview. Please wait for an episode to start playing so bumper blocks can be pre-generated.")
+        raise
     
     block = info["block"]
     
