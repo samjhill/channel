@@ -1452,14 +1452,9 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
                     block = copy.deepcopy(peeked_block)
                     LOGGER.info("Preview: Using pre-generated block for episode %s", Path(next_episode_path).name)
                 else:
-                    # No pre-generated block, try to resolve (with timeout)
-                    from server.stream import resolve_bumper_block
-                    
-                    LOGGER.info("Preview: No pre-generated block found, resolving block directly (may take time)")
-                    # Use a shorter timeout for preview - if it takes too long, fail gracefully
-                    block = resolve_bumper_block(next_episode_idx, entries)
-                    if not block or not block.bumpers:
-                        raise ValueError(f"Failed to resolve bumper block for episode at index {next_episode_idx}")
+                    # No pre-generated block available - don't try to generate on-demand as it's too slow
+                    LOGGER.warning("Preview: No pre-generated block found for episode %s. Bumper blocks may not be generated yet.", Path(next_episode_path).name)
+                    raise ValueError(f"No bumper blocks available for preview. Please wait for an episode to start playing so bumper blocks can be pre-generated. Episode: {Path(next_episode_path).name}")
                 
                 info = {
                     "block": block,
