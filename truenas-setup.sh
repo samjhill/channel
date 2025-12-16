@@ -68,7 +68,22 @@ fi
 echo -e "\n${GREEN}Creating datasets...${NC}"
 
 # Media dataset (if it doesn't exist)
+# CRITICAL: Check if directory already exists with data before creating dataset
+MEDIA_PATH="/mnt/${POOL_NAME}/${MEDIA_DATASET}"
 if ! zfs list "${POOL_NAME}/${MEDIA_DATASET}" >/dev/null 2>&1; then
+    # Check if directory exists and has content
+    if [ -d "${MEDIA_PATH}" ] && [ "$(ls -A "${MEDIA_PATH}" 2>/dev/null)" ]; then
+        echo -e "${RED}WARNING: Directory ${MEDIA_PATH} already exists and contains data!${NC}"
+        echo -e "${RED}Creating a ZFS dataset here would replace this directory and hide your files.${NC}"
+        echo -e "${YELLOW}If your media is already in a Samba share or different location,${NC}"
+        echo -e "${YELLOW}please skip creating this dataset and use the existing path.${NC}"
+        echo ""
+        read -p "Do you want to proceed anyway? This may hide existing files. (yes/no): " -r
+        if [[ ! $REPLY =~ ^[Yy][Ee][Ss]$ ]]; then
+            echo "Aborting. Please use your existing media location."
+            exit 1
+        fi
+    fi
     echo "Creating media dataset: ${POOL_NAME}/${MEDIA_DATASET}"
     zfs create -p "${POOL_NAME}/${MEDIA_DATASET}"
 else
