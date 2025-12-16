@@ -340,6 +340,24 @@ def update_channel(channel_id: str, updated: Dict[str, Any]) -> Dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Invalidate settings cache to ensure fresh config is loaded
+    from .settings_service import _invalidate_settings_cache
+    _invalidate_settings_cache()
+    
+    # Trigger playlist regeneration by restarting generate_playlist.py process
+    # This ensures the playlist reflects the updated channel settings
+    try:
+        # Send SIGTERM to generate_playlist.py to trigger graceful restart via process_monitor
+        result = subprocess.run(
+            ["docker", "exec", "tvchannel", "pkill", "-SIGTERM", "-f", "generate_playlist.py"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        LOGGER.info("Triggered playlist regeneration by restarting generate_playlist.py process")
+    except Exception as e:
+        LOGGER.warning("Failed to trigger playlist regeneration: %s", e)
+    
     # Attempt to restart the media server to apply changes
     restart_success = restart_media_server()
     if not restart_success:
