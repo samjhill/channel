@@ -138,6 +138,8 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
         playlist_mtime: Playlist modification time
         disable_skip_detection: If True, skip detection is disabled (for bumper blocks)
     """
+    global _current_ffmpeg_process
+    
     if not os.path.exists(src):
         LOGGER.error("File does not exist: %s", src)
         return False
@@ -200,7 +202,6 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
         )
         
         # Track this as the current FFmpeg process
-        global _current_ffmpeg_process
         with _current_ffmpeg_lock:
             _current_ffmpeg_process = process
         # Wait for FFmpeg to start and produce first segment before continuing
@@ -278,7 +279,6 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
                                 process.kill()
                                 process.wait()
                             # Clear current process tracking
-                            global _current_ffmpeg_process
                             with _current_ffmpeg_lock:
                                 if _current_ffmpeg_process is process:
                                     _current_ffmpeg_process = None
@@ -309,7 +309,6 @@ def stream_file(src: str, index: int, playlist_mtime: float, disable_skip_detect
     except Exception as e:
         LOGGER.error("Failed to stream %s: %s", src, e)
         # Clear current process tracking on error
-        global _current_ffmpeg_process
         with _current_ffmpeg_lock:
             if _current_ffmpeg_process is process:
                 _current_ffmpeg_process = None
@@ -1009,6 +1008,8 @@ def cleanup_on_exit() -> None:
 
 def run_stream() -> None:
     """Main streaming loop - clean and simple."""
+    global _current_ffmpeg_process
+    
     current_index = 0
     
     # Start pre-generation thread early
@@ -1512,7 +1513,6 @@ def run_stream() -> None:
                             
                             # Stop any FFmpeg processes that might still be streaming bumpers
                             # Exclude the current process if it's still running (shouldn't be, but be safe)
-                            global _current_ffmpeg_process
                             exclude_pid = None
                             with _current_ffmpeg_lock:
                                 if _current_ffmpeg_process and _current_ffmpeg_process.poll() is None:
