@@ -43,9 +43,18 @@ if [ ! -f "$COMPOSE_FILE" ]; then
     exit 1
 fi
 
+# Check if Dockerfile exists
+if [ ! -f "server/Dockerfile" ]; then
+    echo -e "${RED}Error: Dockerfile not found: server/Dockerfile${NC}"
+    echo "Please ensure the server directory and Dockerfile are present"
+    exit 1
+fi
+
 echo -e "${BLUE}Building Docker image...${NC}"
+echo "Build context: $(pwd)"
 docker build -t tvchannel:latest -f server/Dockerfile . || {
     echo -e "${RED}Error: Failed to build Docker image${NC}"
+    echo "Make sure you're in the app directory with server/Dockerfile present"
     exit 1
 }
 
