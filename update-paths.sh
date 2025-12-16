@@ -27,3 +27,4 @@ echo ""
 echo "Updated paths:"
 grep -E "(volumes:|/mnt/)" "$COMPOSE_FILE" | head -5
 
+

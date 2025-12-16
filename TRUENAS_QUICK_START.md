@@ -27,6 +27,12 @@ ls -la /mnt/
 
 ### 2. Prepare Storage (One-time setup)
 
+**⚠️ IMPORTANT: Data Safety**
+- The setup script will check for existing data before creating ZFS datasets
+- If you already have media files in a directory, the script will warn you
+- **Always use your existing media location** - don't create new datasets over existing data
+- If your media is already on a Samba share, skip creating the media dataset
+
 **Option A: Using the setup script** (recommended)
 ```bash
 # Clone repository to a user dataset (NOT /mnt/apps/applications)
@@ -38,6 +44,7 @@ git clone https://github.com/samjhill/channel.git tvchannel
 cd tvchannel
 
 # Run setup script (update POOL_NAME if needed)
+# The script will warn if it finds existing data
 POOL_NAME=blackhole ./truenas-setup.sh  # Replace 'blackhole' with your pool
 ```
 

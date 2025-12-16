@@ -73,3 +73,4 @@ echo ""
 echo "To view full logs: docker logs -f tvchannel"
 echo "To test stream: curl http://localhost:8080/channel/stream.m3u8"
 
+
