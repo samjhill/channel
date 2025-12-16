@@ -213,7 +213,7 @@ export default function BumperManager() {
           </div>
         )}
 
-        {activeTab === "sassy" && config && (
+        {activeTab === "sassy" && config && config.messages && (
           <>
             <p className="help-text">
               Manage sassy card messages that appear between episodes. These messages are randomly
