@@ -15,6 +15,9 @@ RUN apt update && apt install -y \
 
 RUN pip3 install --no-cache-dir watchdog pillow numpy fastapi uvicorn[standard] requests psutil
 
+# Remove default nginx sites to prevent conflicts
+RUN rm -rf /etc/nginx/sites-enabled/* /etc/nginx/sites-available/* || true
+
 WORKDIR /app
 
 # Copy core server files to consistent locations

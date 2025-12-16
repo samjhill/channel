@@ -12,7 +12,9 @@ cleanup() {
 trap cleanup SIGTERM SIGINT
 
 # Start nginx first so the HLS endpoint is available immediately
-service nginx start || true
+# Ensure our custom config is used and default sites are disabled
+rm -f /etc/nginx/sites-enabled/* 2>/dev/null || true
+nginx -t && service nginx start || true
 
 # Clean up old HLS segments on startup (in case of previous crash)
 echo "Cleaning up old HLS segments..."
