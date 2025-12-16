@@ -312,7 +312,7 @@ def ensure_bumper(
     
     except Exception as e:
         # Fallback to full renderer if fast render fails
-        LOGGER.warning("Fast render failed, falling back to full render: %s", e)
+        LOGGER.warning("Fast render failed, falling back to full render: %s", e, exc_info=True)
         from scripts.bumpers.render_up_next import render_up_next_bumper
         
         # First, ensure generic bumper exists (without episode info)
@@ -320,12 +320,17 @@ def ensure_bumper(
         generic_bumper_path = os.path.join(BUMPERS_DIR, generic_filename)
         if not os.path.exists(generic_bumper_path):
             LOGGER.info("Rendering generic 'Up Next' bumper for %r", show_title)
-            render_up_next_bumper(
-                show_title=show_title,
-                output_path=generic_bumper_path,
-                logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
-                episode_label=None,  # Generic bumper has no episode label
-            )
+            try:
+                render_up_next_bumper(
+                    show_title=show_title,
+                    output_path=generic_bumper_path,
+                    logo_path=os.path.join(ASSETS_ROOT, "branding", "hbn_logo_bug.png"),
+                    episode_label=None,  # Generic bumper has no episode label
+                )
+            except Exception as render_error:
+                # Log the full error including FFmpeg stderr if available
+                LOGGER.error("Full render also failed for %r: %s", show_title, render_error, exc_info=True)
+                raise
 
         # Specific-episode bumpers are now generated dynamically (JIT), not saved as files
         # Return generic bumper (specific-episode bumpers will be rendered on-demand)
