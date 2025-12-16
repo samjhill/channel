@@ -285,8 +285,8 @@ def ensure_bumper(
         if bg_available:
             import random
             
-            # Pick a random background for variety
-            background_id = random.randint(0, 4)  # Use backgrounds 0-4
+            # Pick a random background for variety (now supports 0-11)
+            background_id = random.randint(0, 11)  # Use backgrounds 0-11
             
             # First, ensure generic bumper exists (without episode info)
             generic_filename = f"{base_name}.mp4"

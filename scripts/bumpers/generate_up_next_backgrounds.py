@@ -40,7 +40,8 @@ logging.basicConfig(
 LOGGER = logging.getLogger(__name__)
 
 # Number of different background variations to generate
-NUM_BACKGROUNDS = 5
+# Increased to 12 to use more themes and create more variety
+NUM_BACKGROUNDS = 12
 LOOP_DURATION = 10.0  # 10 second loops (seamless)
 FPS = 30
 
@@ -103,19 +104,21 @@ def generate_background_video(
     
     # Add some variation but keep it deterministic
     from scripts.bumpers.render_up_next import _adjust_color
-    theme["top"] = _adjust_color(theme["top"], rng.uniform(-0.05, 0.05))
-    theme["bottom"] = _adjust_color(theme["bottom"], rng.uniform(-0.05, 0.05))
+    # More color variation for more interesting backgrounds
+    color_variation = 0.05 + (background_id % 4) * 0.03
+    theme["top"] = _adjust_color(theme["top"], rng.uniform(-color_variation, color_variation))
+    theme["bottom"] = _adjust_color(theme["bottom"], rng.uniform(-color_variation, color_variation))
     theme["accent"] = _adjust_color(theme["accent"], rng.uniform(-0.04, 0.04))
     theme["pattern"] = _adjust_color(theme["pattern"], rng.uniform(-0.03, 0.03))
     
-    # Animation parameters (deterministic)
-    brightness_amp = 0.012 + (background_id % 3) * 0.004
-    brightness_freq = 0.25 + (background_id % 5) * 0.02
-    brightness_phase = (background_id % 10) * 0.2
-    pattern_freq = 0.18 + (background_id % 4) * 0.04
-    pattern_phase = (background_id % 8) * 0.25
-    pattern_amp = 0.25 + (background_id % 3) * 0.07
-    grain_opacity = 0.22 + (background_id % 5) * 0.02
+    # Animation parameters (deterministic but more varied for visual interest)
+    brightness_amp = 0.008 + (background_id % 5) * 0.006
+    brightness_freq = 0.20 + (background_id % 7) * 0.03
+    brightness_phase = (background_id % 12) * 0.3
+    pattern_freq = 0.15 + (background_id % 6) * 0.05
+    pattern_phase = (background_id % 10) * 0.3
+    pattern_amp = 0.20 + (background_id % 5) * 0.10
+    grain_opacity = 0.18 + (background_id % 6) * 0.03
     
     # Generate pattern layer base
     pattern_layer_base = create_pattern_layer(

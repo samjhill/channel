@@ -62,7 +62,8 @@ def get_up_next_background_path(background_id: Optional[int] = None) -> Optional
             return bg_path
     
     # Try to find any available valid background
-    for bg_id in range(10):  # Check up to 10 backgrounds
+    # Check up to 15 backgrounds to support more variety
+    for bg_id in range(15):
         bg_path = backgrounds_dir / f"bg_{bg_id:02d}.mp4"
         if is_valid_background(bg_path):
             return bg_path
