@@ -19,7 +19,17 @@ else
 fi
 
 echo ""
-echo "1. Building Docker image..."
+echo "1. Ensuring assets are copied to host directory..."
+ASSETS_HOST="/mnt/blackhole/apps/tvchannel/assets"
+if [ -d "assets/branding" ]; then
+    mkdir -p "${ASSETS_HOST}/branding" 2>/dev/null || true
+    if [ ! -f "${ASSETS_HOST}/branding/hbn_logo_bug.png" ] && [ -f "assets/branding/hbn_logo_bug.png" ]; then
+        cp "assets/branding/hbn_logo_bug.png" "${ASSETS_HOST}/branding/" && echo "   ✓ Copied logo file"
+    fi
+fi
+
+echo ""
+echo "2. Building Docker image..."
 docker build -t tvchannel:latest -f server/Dockerfile .
 
 if [ $? -ne 0 ]; then
@@ -46,11 +56,11 @@ else
 fi
 
 echo ""
-echo "4. Waiting for container to initialize..."
+echo "5. Waiting for container to initialize..."
 sleep 5
 
 echo ""
-echo "5. Checking container status..."
+echo "6. Checking container status..."
 if docker ps | grep -q tvchannel; then
     echo "   ✓ Container is running"
 else
