@@ -18,9 +18,9 @@ services:
       # Pool: blackhole
       # App datasets created at: /mnt/blackhole/apps/tvchannel/*
       #
-      # Media directory (read-only) - TV shows are in /mnt/blackhole/media
-      # If your TV shows are in a subdirectory, adjust accordingly
-      - /mnt/blackhole/media:/media/tvchannel:ro
+      # Media directory (read-only) - TV shows are in /mnt/blackhole/media/tv
+      # Your recovered TV shows are accessible here
+      - /mnt/blackhole/media/tv:/media/tvchannel:ro
       # 
       # Application data directories
       - /mnt/blackhole/apps/tvchannel/assets:/app/assets

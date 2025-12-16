@@ -7,7 +7,7 @@ docker run -d \
   --cpus=8.0 \
   -p 8080:8080 \
   -p 8000:8000 \
-  -v /mnt/blackhole/media:/media/tvchannel:ro \
+  -v /mnt/blackhole/media/tv:/media/tvchannel:ro \
   -v /mnt/blackhole/apps/tvchannel/assets:/app/assets \
   -v /mnt/blackhole/apps/tvchannel/config:/app/config \
   -v /mnt/blackhole/apps/tvchannel/hls:/app/hls \
