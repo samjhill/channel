@@ -23,5 +23,8 @@ server/hls/
 server/config/.weather_api_key
 
 # Media assets (do not commit large binary files)
-assets/bumpers/
+# Ignore generated bumpers, but allow pre-generated backgrounds
+assets/bumpers/**
+!assets/bumpers/up_next/backgrounds/
+!assets/bumpers/up_next/backgrounds/*.mp4/
 assets/music/
