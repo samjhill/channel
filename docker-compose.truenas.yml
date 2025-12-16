@@ -1,0 +1,50 @@
+version: '3.8'
+
+# TrueNAS Scale optimized docker-compose configuration
+# Update paths to match your TrueNAS datasets before deploying
+
+services:
+  tvchannel:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    container_name: tvchannel
+    ports:
+      - "8080:8080"
+    volumes:
+      # UPDATE THESE PATHS TO MATCH YOUR TRUENAS DATASETS
+      # Media directory (read-only)
+      - /mnt/tank/media/tv:/media/tvchannel:ro
+      # Application data directories
+      - /mnt/tank/apps/tvchannel/assets:/app/assets
+      - /mnt/tank/apps/tvchannel/config:/app/config
+      - /mnt/tank/apps/tvchannel/hls:/app/hls
+    environment:
+      # UPDATE CORS_ORIGINS with your TrueNAS IP/domain
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://192.168.1.100:5174,http://localhost:5174}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    restart: unless-stopped
+    # Resource limits for production
+    # Increased limits for better performance and headroom
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+          cpus: '4.0'
+        reservations:
+          memory: 1G
+          cpus: '1.0'
+    # Log rotation configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      # Check if API server is responsive
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+

@@ -61,6 +61,17 @@ docker run -d \
 
 That's it! Your stream should now be available at `http://localhost:8080/channel/stream.m3u8`
 
+### Step 2.5: Deploy to TrueNAS Scale (Optional)
+
+If you're running TrueNAS Scale, see the dedicated deployment guides:
+- **Quick Start**: `TRUENAS_QUICK_START.md` - Get up and running in minutes
+- **Full Guide**: `TRUENAS_SCALE_DEPLOYMENT.md` - Complete deployment documentation
+
+Quick overview:
+1. Run `truenas-setup.sh` to create datasets
+2. Update `docker-compose.truenas.yml` with your paths
+3. Deploy via TrueNAS Apps UI or docker-compose
+
 ### Step 3: Watch It
 
 You've got a few options:
