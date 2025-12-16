@@ -23,17 +23,21 @@ BUMPER_BLOCK_MARKER = "BUMPER_BLOCK"
 
 # Directory for pre-generated bumper blocks
 def _resolve_blocks_dir() -> str:
-    """Resolve the blocks directory path, handling both Docker and baremetal."""
+    """Resolve the blocks directory path, handling both Docker and baremetal.
+    
+    IMPORTANT: In Docker, blocks are written to /app/hls/blocks (container-local, writable).
+    Never writes to /media/tvchannel (read-only media mount).
+    """
     override = os.environ.get("HBN_BUMPERS_ROOT")
     if override:
         return os.path.join(override, "blocks")
     
     # Check if running in Docker
     if Path("/app").exists():
-        # Docker: use media volume
-        media_bumpers = "/media/tvchannel/bumpers"
-        if os.path.exists("/media/tvchannel") or os.path.exists(media_bumpers):
-            return os.path.join(media_bumpers, "blocks")
+        # Docker: use HLS directory (container-local, writable)
+        # This ensures blocks are written to /app/hls/blocks, not the read-only media mount
+        hls_blocks = "/app/hls/blocks"
+        return hls_blocks
     
     # Baremetal: use assets directory
     try:
