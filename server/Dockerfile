@@ -36,6 +36,7 @@ COPY server/nginx.conf /etc/nginx/nginx.conf
 COPY server/config /app/config
 COPY assets /app/assets
 COPY scripts /app/scripts
+COPY client/web_test /app/client/web_test
 
 # Build admin UI
 COPY ui/channel-admin /app/ui/channel-admin

@@ -31,12 +31,14 @@ if Path("/app").exists():
     GENERATE_PLAYLIST_CMD = ["python3", "/app/server/generate_playlist.py"]
     STREAM_CMD = ["python3", "/app/server/stream.py"]
     API_CMD = ["python3", "-m", "uvicorn", "server.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    TEST_CLIENT_CMD = ["python3", "-m", "http.server", "8081", "--directory", "/app/client/web_test"]
 else:
     # Baremetal paths
     repo_root = Path(__file__).resolve().parent.parent
     GENERATE_PLAYLIST_CMD = ["python3", str(repo_root / "server" / "generate_playlist.py")]
     STREAM_CMD = ["python3", str(repo_root / "server" / "stream.py")]
     API_CMD = ["python3", "-m", "uvicorn", "server.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+    TEST_CLIENT_CMD = ["python3", "-m", "http.server", "8081", "--directory", str(repo_root / "client" / "web_test")]
 
 PROCESSES = {
     "api": {
@@ -57,6 +59,14 @@ PROCESSES = {
     },
     "stream": {
         "command": STREAM_CMD,
+        "restart_delay": 5,
+        "max_restart_delay": 300,
+        "restart_count": 0,
+        "last_restart": 0,
+        "process": None,
+    },
+    "test_client": {
+        "command": TEST_CLIENT_CMD,
         "restart_delay": 5,
         "max_restart_delay": 300,
         "restart_count": 0,

@@ -12,6 +12,7 @@ services:
     ports:
       - "8080:8080"  # HLS stream + Admin UI + API (via nginx proxy)
       - "8000:8000"  # Direct API access (optional)
+      - "8081:8081"  # Test stream client UI
     volumes:
       # UPDATE THESE PATHS TO MATCH YOUR TRUENAS DATASETS
       # 
