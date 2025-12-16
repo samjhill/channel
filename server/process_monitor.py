@@ -30,13 +30,23 @@ if Path("/app").exists():
     # Docker paths
     GENERATE_PLAYLIST_CMD = ["python3", "/app/server/generate_playlist.py"]
     STREAM_CMD = ["python3", "/app/server/stream.py"]
+    API_CMD = ["python3", "-m", "uvicorn", "server.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
 else:
     # Baremetal paths
     repo_root = Path(__file__).resolve().parent.parent
     GENERATE_PLAYLIST_CMD = ["python3", str(repo_root / "server" / "generate_playlist.py")]
     STREAM_CMD = ["python3", str(repo_root / "server" / "stream.py")]
+    API_CMD = ["python3", "-m", "uvicorn", "server.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
 
 PROCESSES = {
+    "api": {
+        "command": API_CMD,
+        "restart_delay": 5,  # Initial delay in seconds
+        "max_restart_delay": 300,  # Maximum delay (5 minutes)
+        "restart_count": 0,
+        "last_restart": 0,
+        "process": None,
+    },
     "generate_playlist": {
         "command": GENERATE_PLAYLIST_CMD,
         "restart_delay": 5,  # Initial delay in seconds

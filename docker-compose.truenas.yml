@@ -10,7 +10,8 @@ services:
       dockerfile: server/Dockerfile
     container_name: tvchannel
     ports:
-      - "8080:8080"
+      - "8080:8080"  # HLS stream + Admin UI + API (via nginx proxy)
+      - "8000:8000"  # Direct API access (optional)
     volumes:
       # UPDATE THESE PATHS TO MATCH YOUR TRUENAS DATASETS
       # 

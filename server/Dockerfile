@@ -1,10 +1,15 @@
 FROM ubuntu:22.04
 
+# Install Node.js for building admin UI
 RUN apt update && apt install -y \
+    curl \
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt install -y \
     ffmpeg \
     nginx \
     python3 \
     python3-pip \
+    nodejs \
     fonts-dejavu-core && \
     rm -rf /var/lib/apt/lists/*
 
@@ -29,8 +34,14 @@ COPY server/config /app/config
 COPY assets /app/assets
 COPY scripts /app/scripts
 
+# Build admin UI
+COPY ui/channel-admin /app/ui/channel-admin
+WORKDIR /app/ui/channel-admin
+RUN npm install && npm run build
+WORKDIR /app
+
 RUN chmod +x /app/entrypoint.sh /app/process_monitor.py && mkdir -p /app/hls
 
-EXPOSE 8080
+EXPOSE 8080 8000
 
 CMD ["/app/entrypoint.sh"]
