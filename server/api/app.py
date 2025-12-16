@@ -1369,7 +1369,8 @@ def _build_bumper_preview_payload() -> Dict[str, Any]:
     # Find the next episode segment
     # All segments returned by build_playlist_segments are episode segments
     if not segments:
-        raise ValueError("No segments found in playlist")
+        LOGGER.warning("Preview: No segments found in playlist - playlist may not be generated yet")
+        raise ValueError("No segments found in playlist. Please wait for playlist generation to complete.")
     
     # Get next segment after current
     if current_idx >= 0 and current_idx < len(segments) - 1:
