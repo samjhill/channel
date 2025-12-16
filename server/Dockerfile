@@ -35,6 +35,8 @@ COPY server/nginx.conf /etc/nginx/nginx.conf
 # Note: If a volume is mounted at /app/config, it will override these files
 COPY server/config /app/config
 COPY assets /app/assets
+# Also copy assets to a backup location so we can restore backgrounds to volume mount
+COPY assets /app/assets_backup
 COPY scripts /app/scripts
 # Copy test client files
 COPY client/web_test /app/client/web_test

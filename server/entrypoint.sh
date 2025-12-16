@@ -11,9 +11,35 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT
 
-# Note: Assets are copied to host directory during setup/rebuild
-# The volume mount /mnt/blackhole/apps/tvchannel/assets:/app/assets
-# means we can't copy from inside the container - assets must be on the host
+# Copy assets from image backup to volume-mounted directory if missing
+# The volume mount overrides /app/assets, so we use /app/assets_backup as source
+if [ -d "/app/assets_backup" ]; then
+    # Copy logo if missing
+    if [ ! -f "/app/assets/branding/hbn_logo_bug.png" ] && [ -f "/app/assets_backup/branding/hbn_logo_bug.png" ]; then
+        echo "Copying logo file to assets directory..."
+        mkdir -p /app/assets/branding
+        cp /app/assets_backup/branding/hbn_logo_bug.png /app/assets/branding/ 2>/dev/null || true
+    fi
+    
+    # Copy up-next backgrounds if missing (ensure all 12 backgrounds are available)
+    if [ -d "/app/assets_backup/bumpers/up_next/backgrounds" ]; then
+        BACKGROUNDS_DIR="/app/assets/bumpers/up_next/backgrounds"
+        BACKUP_DIR="/app/assets_backup/bumpers/up_next/backgrounds"
+        
+        # Count existing backgrounds
+        EXISTING_COUNT=$(ls -1 "$BACKGROUNDS_DIR"/*.mp4 2>/dev/null | wc -l || echo "0")
+        
+        # If we don't have all 12 backgrounds, copy from backup
+        if [ "$EXISTING_COUNT" -lt 12 ]; then
+            echo "Copying up-next backgrounds from image to assets directory..."
+            mkdir -p "$BACKGROUNDS_DIR"
+            # Copy all backgrounds from backup
+            cp "$BACKUP_DIR"/*.mp4 "$BACKGROUNDS_DIR"/ 2>/dev/null || true
+            NEW_COUNT=$(ls -1 "$BACKGROUNDS_DIR"/*.mp4 2>/dev/null | wc -l || echo "0")
+            echo "Copied backgrounds: $NEW_COUNT total backgrounds available"
+        fi
+    fi
+fi
 
 # Start nginx first so the HLS endpoint is available immediately
 # Ensure our custom config is used and default sites are disabled
