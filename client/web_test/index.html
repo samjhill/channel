@@ -29,13 +29,13 @@
     </style>
   </head>
   <body>
-    <h1>Local TV Channel Test</h1>
-    <p>Ensure the Docker server is running on port 8080 before loading this page.</p>
+    <h1>TV Channel Test</h1>
+    <p>Streaming from TrueNAS: 192.168.2.39:8080</p>
     <video id="video" controls autoplay muted></video>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script>
       const video = document.getElementById('video');
-      const streamUrl = 'http://localhost:8080/channel/stream.m3u8';
+      const streamUrl = 'http://192.168.2.39:8080/channel/stream.m3u8';
 
       if (window.Hls && Hls.isSupported()) {
         const hlsConfig = {
