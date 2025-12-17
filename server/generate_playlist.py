@@ -250,7 +250,11 @@ def _render_bumper_safe(
     except Exception as exc:
         error_msg = str(exc)
         # Log full error with traceback to help diagnose FFmpeg issues
+        # Include the full exception message which should contain FFmpeg stderr if available
         LOGGER.error("Failed to render bumper for %r: %s", show_title, error_msg, exc_info=True)
+        # Also log the error message separately so it's visible in logs
+        if "FFmpeg stderr" in error_msg or "FFmpeg stdout" in error_msg:
+            LOGGER.error("FFmpeg error details for %r:\n%s", show_title, error_msg)
         return (None, error_msg)
 
 

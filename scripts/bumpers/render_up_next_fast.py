@@ -217,7 +217,10 @@ def render_up_next_bumper_fast(
                 description=f"Overlaying text on next-up background",
             )
         except Exception as e:
-            print(f"[Up Next] Fast render failed: {e}, falling back to frame-by-frame", file=sys.stderr)
+            error_details = str(e)
+            print(f"[Up Next] Fast render failed: {error_details}", file=sys.stderr)
+            # Re-raise with full error details so caller can see FFmpeg output
+            raise RuntimeError(f"Fast render failed: {error_details}") from e
             # Fallback to frame-by-frame
             from scripts.bumpers.render_up_next import render_up_next_bumper
             try:
